@@ -1,0 +1,8 @@
+[package]
+name = "fuse-ard"
+authors = ["RoccoDev <hey@rocco.dev"]
+version = "0.1.0"
+edition = "2021"
+
+[dependencies]
+ardain = { path = "../ardain" }

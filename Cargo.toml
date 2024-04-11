@@ -1,0 +1,3 @@
+[workspace]
+members = ["fuse-ard", "ardain"]
+resolver = "2"
