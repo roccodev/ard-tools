@@ -74,7 +74,7 @@ impl ArhFileSystem {
                 .ok()?;
             node = &children[child]
         }
-        Some(node)
+        matches!(node.entry, DirEntry::Directory { .. }).then_some(node)
     }
 }
 
