@@ -4,7 +4,7 @@ use std::{
     mem::size_of,
 };
 
-use binrw::{binread, BinRead, NullString};
+use binrw::{binread, BinRead};
 
 const KEY_XOR: u32 = 0xF3F35353;
 
@@ -19,7 +19,7 @@ pub struct Arh {
     #[br(args { offsets, key })]
     encrypted: EncryptedSection,
     #[br(args { len: offsets.file_table_len }, seek_before = SeekFrom::Start(offsets.file_table_offset.into()))]
-    file_table: FileTable,
+    pub file_table: FileTable,
 }
 
 #[derive(Debug, PartialEq, Clone, Copy)]
@@ -43,7 +43,7 @@ struct EncryptedSection {
     #[br(args { key, len: offsets.str_table_len }, seek_before = SeekFrom::Start(offsets.str_table_offset.into()))]
     string_table: StringTable,
     #[br(args { key, len: offsets.path_dict_len }, seek_before = SeekFrom::Start(offsets.path_dict_offset.into()))]
-    node_table: PathDictionary,
+    path_dict: PathDictionary,
 }
 
 #[derive(Debug, PartialEq, Clone)]
@@ -59,7 +59,7 @@ pub struct StringTable {
 #[br(import { len: u32, key: u32 })]
 pub struct PathDictionary {
     #[br(args { count: usize::try_from(len).unwrap() / size_of::<DictNode>() }, map_stream = |reader| EncryptedSection::decrypt(reader, len, key).expect("TODO"))]
-    nodes: Vec<DictNode>,
+    pub nodes: Vec<DictNode>,
 }
 
 #[derive(Debug, PartialEq, Clone)]
@@ -87,6 +87,16 @@ pub struct FileMeta {
     pub id: u32,
 }
 
+impl Arh {
+    pub fn strings(&self) -> &StringTable {
+        &self.encrypted.string_table
+    }
+
+    pub fn path_dictionary(&self) -> &PathDictionary {
+        &self.encrypted.path_dict
+    }
+}
+
 impl EncryptedSection {
     fn decrypt<S: Read + Seek>(
         mut stream: S,
@@ -111,7 +121,7 @@ impl EncryptedSection {
 }
 
 impl StringTable {
-    fn get_str_part_id(&self, mut offset: usize) -> (&str, u32) {
+    pub fn get_str_part_id(&self, mut offset: usize) -> (&str, u32) {
         let st = CStr::from_bytes_until_nul(&self.strings[offset..])
             .unwrap()
             .to_str()
@@ -124,46 +134,35 @@ impl StringTable {
     }
 }
 
-fn test_lookup(arh: &Arh, name: &str) {
-    let nodes = &arh.encrypted.node_table.nodes;
-    let mut cur = (0usize, &nodes[0]);
-    let mut i = 0;
-    for (j, b) in name.bytes().enumerate() {
-        i = j;
-        if cur.1.next < 0 {
-            break;
+impl PathDictionary {
+    pub fn get_full_path(&self, mut node_idx: usize, strings: &StringTable) -> String {
+        let mut node = &self.nodes[node_idx];
+        assert!(node.next < 0, "must start from a leaf node");
+
+        let mut path = strings
+            .get_str_part_id(-node.next as usize)
+            .0
+            .to_string()
+            .into_bytes();
+        path.reverse();
+
+        while node.next != 0 {
+            let cur_idx = node_idx;
+            node_idx = node.prev.try_into().unwrap();
+            node = &self.nodes[node_idx];
+            path.push((cur_idx as i32 ^ node.next).try_into().unwrap());
         }
-        let next = (cur.1.next ^ b as i32) as usize;
-        println!("{next} => {:?}", nodes[next]);
-        assert_eq!(nodes[next].prev, cur.0 as i32);
-        cur = (next, &nodes[next]);
+
+        path.reverse();
+        String::from_utf8(path).unwrap()
     }
-    println!("Found {cur:?}");
-    println!(
-        "Parts {:?} {:?}",
-        arh.encrypted
-            .string_table
-            .get_str_part_id(-cur.1.next as usize),
-        &name[i..]
-    )
 }
 
-#[cfg(test)]
-mod tests {
-    use std::fs::File;
-
-    use binrw::BinRead;
-
-    use crate::arh::test_lookup;
-
-    use super::Arh;
-
-    #[test]
-    pub fn a() {
-        let mut f = File::open("/tmp/bf3.arh").unwrap();
-        let f = Arh::read(&mut f).unwrap();
-        //println!("{f:?}");
-        test_lookup(&f, "/bdad/btl.bdat");
-        panic!();
+impl FileTable {
+    pub fn get_meta(&self, file_id: u32) -> Option<&FileMeta> {
+        self.files
+            .binary_search_by_key(&file_id, |f| f.id)
+            .ok()
+            .map(|id| &self.files[id])
     }
 }

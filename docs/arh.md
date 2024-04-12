@@ -69,9 +69,9 @@ The first entry in the path dictionary should have `next = 0` and `previous < 0`
 ### File lookup by path
 
 ```cpp
-// path must start with /
+// name must start with /
 int get_file_id(DictNode *dict, char *strings, char *name) {
-    int len = strlen(path);
+    int len = strlen(name);
 
     int node = 0;
     int last = -1;
