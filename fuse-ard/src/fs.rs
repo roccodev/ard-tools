@@ -3,21 +3,20 @@ use std::{
     ffi::OsStr,
     fs::File,
     hash::{Hash, Hasher},
-    io::{BufReader, Cursor, Read, Seek, SeekFrom},
+    io::{BufReader, Read, Seek},
     time::{Duration, UNIX_EPOCH},
 };
 
 use anyhow::Result;
-use ardain::{ArhFileSystem, DirEntry, DirNode, FileMeta};
+use ardain::{ArdReader, ArhFileSystem, DirEntry, DirNode, FileMeta};
 use fuser::{
     FileAttr, FileType, Filesystem, ReplyAttr, ReplyData, ReplyDirectory, ReplyEntry, Request,
 };
 use libc::{ENOENT, ENOTDIR};
-use xc3_lib::xbc1::Xbc1;
 
 pub struct ArhFuseSystem {
     fs: ArhFileSystem,
-    ard_file: BufReader<File>,
+    ard_file: ArdReader<BufReader<File>>,
     inode_cache: HashMap<u64, (String, u64)>,
 }
 
@@ -30,7 +29,7 @@ impl ArhFuseSystem {
         Ok(Self {
             fs,
             inode_cache: HashMap::default(),
-            ard_file: BufReader::new(ard),
+            ard_file: ArdReader::new(BufReader::new(ard)),
         })
     }
 
@@ -158,27 +157,13 @@ impl Filesystem for ArhFuseSystem {
             return;
         };
         assert!(offset >= 0);
-        self.ard_file.seek(SeekFrom::Start(file.offset)).unwrap();
-
-        //let mut handle = self.ard_file.take(file.compressed_size.into());
-        if file.uncompressed_size != 0 {
-            let offset: usize = offset.try_into().unwrap();
-            let size: usize = size.try_into().unwrap();
-            let xbc1 = Xbc1::read(&mut self.ard_file).unwrap();
-            let buf = xbc1.decompress().unwrap();
-            let end = buf.len().min(offset.saturating_add(size));
-            reply.data(&buf[offset..end])
-        } else {
-            let size = file
-                .compressed_size
-                .saturating_sub(offset.try_into().unwrap())
-                .min(size);
-            let mut buf = vec![0u8; size.try_into().unwrap()];
-            let reader = &mut self.ard_file;
-            reader.seek_relative(offset).unwrap();
-            reader.take(size.into()).read_exact(&mut buf).unwrap();
-            reply.data(&buf);
-        }
+        let data = self
+            .ard_file
+            .entry(file)
+            .skip_take(offset as u64, size.into())
+            .read()
+            .unwrap();
+        reply.data(&data);
     }
 
     fn forget(&mut self, _req: &Request, ino: u64, nlookup: u64) {

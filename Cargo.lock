@@ -82,6 +82,8 @@ name = "ardain"
 version = "0.1.0"
 dependencies = [
  "binrw",
+ "thiserror",
+ "xc3_lib",
 ]
 
 [[package]]
@@ -372,7 +374,6 @@ dependencies = [
  "env_logger",
  "fuser",
  "libc",
- "xc3_lib",
 ]
 
 [[package]]
