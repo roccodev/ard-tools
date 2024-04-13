@@ -83,7 +83,7 @@ pub struct FileMeta {
     pub offset: u64,
     pub compressed_size: u32,
     pub uncompressed_size: u32,
-    _unk: u32,
+    pub _unk: u32,
     pub id: u32,
 }
 

@@ -1,35 +1,42 @@
 use std::{
     collections::{hash_map::DefaultHasher, HashMap},
     ffi::OsStr,
+    fs::File,
     hash::{Hash, Hasher},
-    io::{Read, Seek},
+    io::{BufReader, Cursor, Read, Seek, SeekFrom},
     time::{Duration, UNIX_EPOCH},
 };
 
 use anyhow::Result;
 use ardain::{ArhFileSystem, DirEntry, DirNode, FileMeta};
-use fuser::{FileAttr, FileType, Filesystem, ReplyAttr, ReplyDirectory, ReplyEntry, Request};
+use fuser::{
+    FileAttr, FileType, Filesystem, ReplyAttr, ReplyData, ReplyDirectory, ReplyEntry, Request,
+};
 use libc::{ENOENT, ENOTDIR};
+use xc3_lib::xbc1::Xbc1;
 
 pub struct ArhFuseSystem {
     fs: ArhFileSystem,
+    ard_file: BufReader<File>,
     inode_cache: HashMap<u64, (String, u64)>,
 }
 
 const TTL: Duration = Duration::from_secs(1);
+const INODE_ROOT: u64 = 1;
 
 impl ArhFuseSystem {
-    pub fn load(reader: impl Read + Seek) -> Result<Self> {
-        let fs = ArhFileSystem::load(reader)?;
+    pub fn load(arh: impl Read + Seek, ard: File) -> Result<Self> {
+        let fs = ArhFileSystem::load(arh)?;
         Ok(Self {
             fs,
             inode_cache: HashMap::default(),
+            ard_file: BufReader::new(ard),
         })
     }
 
     fn get_inode(&mut self, full_path: String) -> u64 {
         if full_path == "/" {
-            return 1;
+            return INODE_ROOT;
         }
         let mut hash = DefaultHasher::new();
         full_path.hash(&mut hash);
@@ -42,7 +49,7 @@ impl ArhFuseSystem {
     }
 
     fn get_path(&self, inode: u64) -> Option<&str> {
-        if inode == 1 {
+        if inode == INODE_ROOT {
             return Some("/");
         }
         self.inode_cache.get(&inode).map(|s| s.0.as_str())
@@ -51,7 +58,7 @@ impl ArhFuseSystem {
 
 impl Filesystem for ArhFuseSystem {
     fn lookup(&mut self, _req: &Request, parent: u64, name: &OsStr, reply: ReplyEntry) {
-        let base = if parent == 1 {
+        let base = if parent == INODE_ROOT {
             ""
         } else {
             let Some(parent) = self.get_path(parent) else {
@@ -132,7 +139,49 @@ impl Filesystem for ArhFuseSystem {
         reply.ok();
     }
 
-    fn forget(&mut self, _req: &Request<'_>, ino: u64, nlookup: u64) {
+    fn read(
+        &mut self,
+        _req: &Request,
+        ino: u64,
+        _fh: u64,
+        offset: i64,
+        size: u32,
+        _flags: i32,
+        _lock_owner: Option<u64>,
+        reply: ReplyData,
+    ) {
+        let Some(file) = self
+            .get_path(ino)
+            .and_then(|path| self.fs.get_file_info(path))
+        else {
+            reply.error(ENOENT);
+            return;
+        };
+        assert!(offset >= 0);
+        self.ard_file.seek(SeekFrom::Start(file.offset)).unwrap();
+
+        //let mut handle = self.ard_file.take(file.compressed_size.into());
+        if file.uncompressed_size != 0 {
+            let offset: usize = offset.try_into().unwrap();
+            let size: usize = size.try_into().unwrap();
+            let xbc1 = Xbc1::read(&mut self.ard_file).unwrap();
+            let buf = xbc1.decompress().unwrap();
+            let end = buf.len().min(offset.saturating_add(size));
+            reply.data(&buf[offset..end])
+        } else {
+            let size = file
+                .compressed_size
+                .saturating_sub(offset.try_into().unwrap())
+                .min(size);
+            let mut buf = vec![0u8; size.try_into().unwrap()];
+            let reader = &mut self.ard_file;
+            reader.seek_relative(offset).unwrap();
+            reader.take(size.into()).read_exact(&mut buf).unwrap();
+            reply.data(&buf);
+        }
+    }
+
+    fn forget(&mut self, _req: &Request, ino: u64, nlookup: u64) {
         let cnt = if let Some((_, cnt)) = self.inode_cache.get_mut(&ino) {
             *cnt = cnt.saturating_sub(nlookup);
             *cnt
@@ -166,9 +215,13 @@ fn make_dir_attr(dir: &DirNode, inode: u64) -> FileAttr {
 }
 
 fn make_file_attr(file: &FileMeta, inode: u64) -> FileAttr {
+    let mut sz = file.uncompressed_size.into();
+    if sz == 0 && file.compressed_size != 48 {
+        sz = file.compressed_size.into();
+    }
     FileAttr {
         ino: inode,
-        size: file.uncompressed_size.into(),
+        size: sz,
         blocks: 0,
         atime: UNIX_EPOCH,
         mtime: UNIX_EPOCH,
