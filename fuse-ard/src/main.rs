@@ -11,7 +11,7 @@ fn main() {
     let cmd = Command::new("fuse-ard")
         .arg(arg!([mount_point] "where to mount the archive, e.g. /mnt/ard").required(true))
         .arg(arg!(--arh <FILE> "path to the .arh file").required(true))
-        .arg(arg!(--ard <FILE> "path to the .ard file").required(true))
+        .arg(arg!(--ard <FILE> "path to the .ard file. If absent, some operations won't be available."))
         .arg(arg!(-r --readonly "mount the archive as read-only"))
         .arg(arg!(-d --debug "enable FUSE debugging and debug logs"));
     let matches = cmd.get_matches();
@@ -20,7 +20,7 @@ fn main() {
     env_logger::Builder::from_env(Env::default().default_filter_or(if debug {
         "debug"
     } else {
-        "warn"
+        "info"
     }))
     .init();
 

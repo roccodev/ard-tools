@@ -75,31 +75,35 @@ int get_file_id(DictNode *dict, char *strings, char *name) {
 
     int node = 0;
     int last = -1;
-    for (int i = 0; i < len; i++) {
-        last = i;
-        if (dict[node]->next < 0) {
-            break;
+    while (dict[node]->next >= 0) {
+        if len == 0 {
+            // If we've consumed the whole path, the file exists iff there are no more
+            // nodes to be visited.
+            if node == dict[node]->prev {
+                break;
+            }
+            return -1;
         }
-        int next = dict[node]->next ^ name[i];
+        int next = dict[node]->next ^ (*name);
         if (dict[next]->prev != node) {
             // Wrong prefix or directory name
             return -1;
         }
         node = next;
+        len--;
+        name++;
     }
-
-    len -= last;
 
     // Compare the file name against the final part we found in the
     // string table
     int str_offset = -dict[node]->next;
     do {
-        if (len-- <= 0 || name[last] != strings[str_offset]) {
+        if (len-- <= 0 || *name != strings[str_offset]) {
             // Name mismatch
             return -1;
         }
         str_offset++;
-        last++;
+        name++;
     } while (strings[str_offset] != 0);
 
     return * (int *) (strings + str_offset + 1);

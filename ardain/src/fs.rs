@@ -34,23 +34,28 @@ impl ArhFileSystem {
         self.get_file_info(path).is_some()
     }
 
-    pub fn get_file_info(&self, path: &str) -> Option<&FileMeta> {
+    pub fn get_file_info(&self, mut path: &str) -> Option<&FileMeta> {
         let nodes = &self.arh.path_dictionary().nodes;
         let mut cur = (0usize, &nodes[0]);
-        let mut i = 0;
-        for (j, b) in path.bytes().enumerate() {
-            i = j;
-            if cur.1.next < 0 {
-                break;
+
+        while cur.1.next >= 0 {
+            if path.is_empty() {
+                // If we've consumed the whole path, the file exists iff there are no more
+                // nodes to be visited.
+                if cur.0 as i32 == cur.1.prev {
+                    break;
+                }
+                return None;
             }
-            let next = (cur.1.next ^ b as i32) as usize;
+            let next = (cur.1.next ^ path.as_bytes()[0] as i32) as usize;
             if nodes[next].prev != cur.0 as i32 {
                 return None;
             }
             cur = (next, &nodes[next]);
+            path = &path[1..];
         }
         let (remaining, file_id) = self.arh.strings().get_str_part_id(-cur.1.next as usize);
-        (remaining == &path[i..])
+        (remaining == path)
             .then_some(())
             .and_then(|_| self.arh.file_table.get_meta(file_id))
     }

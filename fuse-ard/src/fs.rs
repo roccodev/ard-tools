@@ -13,6 +13,7 @@ use fuser::{
     FileAttr, FileType, Filesystem, ReplyAttr, ReplyData, ReplyDirectory, ReplyEntry, Request,
 };
 use libc::{ENOENT, ENOTDIR};
+use log::debug;
 
 pub struct ArhFuseSystem {
     fs: ArhFileSystem,
@@ -61,6 +62,7 @@ impl Filesystem for ArhFuseSystem {
             ""
         } else {
             let Some(parent) = self.get_path(parent) else {
+                debug!("[LOOKUP] invalid parent inode {parent}");
                 reply.error(ENOENT);
                 return;
             };
@@ -68,20 +70,24 @@ impl Filesystem for ArhFuseSystem {
         };
         let name = name.to_str().expect("TODO");
         let name = format!("{base}/{name}");
-        let ino = self.get_inode(name.clone());
+        let ino = self.get_inode(name.clone()); // TODO this creates inodes for invalid files too
         if let Some(dir) = self.fs.get_dir(&name) {
+            debug!("[LOOKUP:{name}] found directory with inode {ino}");
             reply.entry(&TTL, &make_dir_attr(dir, ino), 0);
             return;
         }
         if let Some(file) = self.fs.get_file_info(&name) {
+            debug!("[LOOKUP:{name}] found file with inode {ino}");
             reply.entry(&TTL, &make_file_attr(file, ino), 0);
             return;
         }
+        debug!("[LOOKUP:{name}] no match");
         reply.error(ENOENT);
     }
 
     fn getattr(&mut self, _req: &Request<'_>, ino: u64, reply: ReplyAttr) {
         let Some(name) = self.get_path(ino) else {
+            debug!("[GETATTR:{ino}] inode unknown");
             reply.error(ENOENT);
             return;
         };
@@ -104,6 +110,7 @@ impl Filesystem for ArhFuseSystem {
         mut reply: ReplyDirectory,
     ) {
         let Some(dir) = self.get_path(ino).and_then(|path| self.fs.get_dir(path)) else {
+            debug!("[READDIR:{ino}] inode unknown");
             reply.error(ENOENT);
             return;
         };
@@ -153,6 +160,7 @@ impl Filesystem for ArhFuseSystem {
             .get_path(ino)
             .and_then(|path| self.fs.get_file_info(path))
         else {
+            debug!("[READ:{ino}] inode unknown");
             reply.error(ENOENT);
             return;
         };
@@ -168,12 +176,14 @@ impl Filesystem for ArhFuseSystem {
 
     fn forget(&mut self, _req: &Request, ino: u64, nlookup: u64) {
         let cnt = if let Some((_, cnt)) = self.inode_cache.get_mut(&ino) {
+            debug!("[FORGET] Decrementing inode count for {ino} (cnt -= {nlookup})");
             *cnt = cnt.saturating_sub(nlookup);
             *cnt
         } else {
             return;
         };
         if cnt == 0 {
+            debug!("[FORGET] Forgetting {ino} (cnt = 0)");
             self.inode_cache.remove(&ino);
         }
     }

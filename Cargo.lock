@@ -402,6 +402,7 @@ dependencies = [
  "env_logger",
  "fuser",
  "libc",
+ "log",
 ]
 
 [[package]]
