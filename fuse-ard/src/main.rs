@@ -25,7 +25,9 @@ fn main() {
     .init();
 
     let arh = File::open(matches.get_one::<String>("arh").unwrap()).unwrap();
-    let ard = File::open(matches.get_one::<String>("ard").unwrap()).unwrap();
+    let ard = matches
+        .get_one::<String>("ard")
+        .map(|path| File::open(path).unwrap());
     let fs = ArhFuseSystem::load(arh, ard).unwrap();
 
     let mount_point = matches.get_one::<String>("mount_point").unwrap();

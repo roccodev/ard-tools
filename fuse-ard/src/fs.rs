@@ -12,12 +12,12 @@ use ardain::{ArdReader, ArhFileSystem, DirEntry, DirNode, FileMeta};
 use fuser::{
     FileAttr, FileType, Filesystem, ReplyAttr, ReplyData, ReplyDirectory, ReplyEntry, Request,
 };
-use libc::{ENOENT, ENOTDIR};
+use libc::{ENOENT, ENOTDIR, ENOTSUP};
 use log::debug;
 
 pub struct ArhFuseSystem {
     fs: ArhFileSystem,
-    ard_file: ArdReader<BufReader<File>>,
+    ard_file: Option<ArdReader<BufReader<File>>>,
     inode_cache: HashMap<u64, (String, u64)>,
 }
 
@@ -25,12 +25,12 @@ const TTL: Duration = Duration::from_secs(1);
 const INODE_ROOT: u64 = 1;
 
 impl ArhFuseSystem {
-    pub fn load(arh: impl Read + Seek, ard: File) -> Result<Self> {
+    pub fn load(arh: impl Read + Seek, ard: Option<File>) -> Result<Self> {
         let fs = ArhFileSystem::load(arh)?;
         Ok(Self {
             fs,
             inode_cache: HashMap::default(),
-            ard_file: ArdReader::new(BufReader::new(ard)),
+            ard_file: ard.map(|ard| ArdReader::new(BufReader::new(ard))),
         })
     }
 
@@ -165,8 +165,11 @@ impl Filesystem for ArhFuseSystem {
             return;
         };
         assert!(offset >= 0);
-        let data = self
-            .ard_file
+        let Some(ard) = self.ard_file.as_mut() else {
+            reply.error(ENOTSUP);
+            return;
+        };
+        let data = ard
             .entry(file)
             .skip_take(offset as u64, size.into())
             .read()
