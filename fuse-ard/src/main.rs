@@ -31,12 +31,12 @@ fn main() {
     let fs = ArhFuseSystem::load(arh, ard).unwrap();
 
     let mount_point = matches.get_one::<String>("mount_point").unwrap();
-    let mut opts = vec![
-        MountOption::RO,
-        MountOption::CUSTOM("kernel_cache".to_string()),
-    ];
+    let mut opts = vec![MountOption::CUSTOM("kernel_cache".to_string())];
     if debug {
         opts.push(MountOption::CUSTOM("debug".to_string()));
+    }
+    if matches.get_flag("readonly") {
+        opts.push(MountOption::RO);
     }
     fuser::mount2(fs, mount_point, &opts).unwrap();
 }

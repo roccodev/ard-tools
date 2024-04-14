@@ -70,7 +70,7 @@ pub struct FileTable {
     files: Vec<FileMeta>,
 }
 
-#[derive(Debug, PartialEq, Clone)]
+#[derive(Debug, PartialEq, Clone, Copy)]
 #[binread]
 pub struct DictNode {
     pub next: i32,
@@ -92,8 +92,16 @@ impl Arh {
         &self.encrypted.string_table
     }
 
+    pub fn strings_mut(&mut self) -> &mut StringTable {
+        &mut self.encrypted.string_table
+    }
+
     pub fn path_dictionary(&self) -> &PathDictionary {
         &self.encrypted.path_dict
+    }
+
+    pub fn path_dictionary_mut(&mut self) -> &mut PathDictionary {
+        &mut self.encrypted.path_dict
     }
 }
 
@@ -132,6 +140,18 @@ impl StringTable {
             u32::read_le(&mut Cursor::new(&self.strings[offset..])).unwrap(),
         )
     }
+
+    pub fn push(&mut self, text: &str, id: u32) -> i32 {
+        let offset = self
+            .strings
+            .len()
+            .try_into()
+            .expect("max string table offset reached");
+        self.strings.extend_from_slice(text.as_bytes());
+        self.strings.push(0);
+        self.strings.extend_from_slice(&id.to_le_bytes());
+        offset
+    }
 }
 
 impl PathDictionary {
@@ -156,6 +176,16 @@ impl PathDictionary {
         path.reverse();
         String::from_utf8(path).unwrap()
     }
+
+    /// Allocates a new node block (0x80 entries) and returns the first offset of the block.
+    pub fn allocate_new_block(&mut self) -> usize {
+        let offset = self.nodes.len();
+        self.nodes.reserve_exact(0x80);
+        for _ in 0..0x80 {
+            self.nodes.push(DictNode { next: 0, prev: 0 });
+        }
+        offset
+    }
 }
 
 impl FileTable {
@@ -164,5 +194,19 @@ impl FileTable {
             .binary_search_by_key(&file_id, |f| f.id)
             .ok()
             .map(|id| &self.files[id])
+    }
+
+    pub fn get_meta_mut(&mut self, file_id: u32) -> Option<&mut FileMeta> {
+        self.files
+            .binary_search_by_key(&file_id, |f| f.id)
+            .ok()
+            .map(|id| &mut self.files[id])
+    }
+
+    pub fn push_entry(&mut self, mut meta: FileMeta) -> u32 {
+        let id = self.files.len().try_into().expect("dir tree limit");
+        meta.id = id;
+        self.files.push(meta);
+        id
     }
 }

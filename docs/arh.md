@@ -76,9 +76,9 @@ int get_file_id(DictNode *dict, char *strings, char *name) {
     int node = 0;
     int last = -1;
     while (dict[node]->next >= 0) {
-        if len == 0 {
+        if (len == 0) {
             // If we've consumed the whole path, the file exists iff there are no more
-            // nodes to be visited.
+            // nodes to visit.
             if node == dict[node]->prev {
                 break;
             }

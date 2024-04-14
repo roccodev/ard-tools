@@ -54,22 +54,28 @@ impl ArhFuseSystem {
         }
         self.inode_cache.get(&inode).map(|s| s.0.as_str())
     }
+
+    fn build_path(&self, parent_inode: u64, name: &OsStr) -> Option<String> {
+        let base = if parent_inode == INODE_ROOT {
+            ""
+        } else {
+            let Some(parent) = self.get_path(parent_inode) else {
+                return None;
+            };
+            parent
+        };
+        let name = name.to_str()?;
+        Some(format!("{base}/{name}"))
+    }
 }
 
 impl Filesystem for ArhFuseSystem {
     fn lookup(&mut self, _req: &Request, parent: u64, name: &OsStr, reply: ReplyEntry) {
-        let base = if parent == INODE_ROOT {
-            ""
-        } else {
-            let Some(parent) = self.get_path(parent) else {
-                debug!("[LOOKUP] invalid parent inode {parent}");
-                reply.error(ENOENT);
-                return;
-            };
-            parent
+        let Some(name) = self.build_path(parent, name) else {
+            debug!("[LOOKUP] invalid parent inode {parent}");
+            reply.error(ENOENT);
+            return;
         };
-        let name = name.to_str().expect("TODO");
-        let name = format!("{base}/{name}");
         let ino = self.get_inode(name.clone()); // TODO this creates inodes for invalid files too
         if let Some(dir) = self.fs.get_dir(&name) {
             debug!("[LOOKUP:{name}] found directory with inode {ino}");
@@ -188,6 +194,30 @@ impl Filesystem for ArhFuseSystem {
         if cnt == 0 {
             debug!("[FORGET] Forgetting {ino} (cnt = 0)");
             self.inode_cache.remove(&ino);
+        }
+    }
+
+    fn mknod(
+        &mut self,
+        _req: &Request<'_>,
+        parent: u64,
+        name: &OsStr,
+        _mode: u32,
+        _umask: u32,
+        _rdev: u32,
+        reply: ReplyEntry,
+    ) {
+        let Some(name) = self.build_path(parent, name) else {
+            debug!("[MKNOD] invalid parent inode {parent}");
+            reply.error(ENOENT);
+            return;
+        };
+        let inode = self.get_inode(name.clone());
+        match self.fs.create_file(&name) {
+            Ok(meta) => reply.entry(&TTL, &make_file_attr(&meta, inode), 0),
+            e @ Err(_) => {
+                e.unwrap(); // TODO
+            }
         }
     }
 }

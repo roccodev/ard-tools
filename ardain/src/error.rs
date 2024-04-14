@@ -14,4 +14,8 @@ pub enum Error {
     SizeConvert(#[from] TryFromIntError),
     #[error("ARD entry decompression: {0}")]
     ArdDecompress(#[from] DecompressStreamError),
+    #[error("FS: no such file or directory")]
+    FsNoEntry,
+    #[error("FS: an entry already exists with this name")]
+    FsAlreadyExists,
 }
