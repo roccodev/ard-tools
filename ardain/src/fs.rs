@@ -101,6 +101,12 @@ impl ArhFileSystem {
     // Structural modifications
 
     pub fn create_file(&mut self, full_path: &str) -> Result<&mut FileMeta> {
+        if self.get_file_info(full_path).is_some() {
+            return Err(Error::FsAlreadyExists);
+        }
+
+        // Follow existing paths
+
         todo!()
     }
 

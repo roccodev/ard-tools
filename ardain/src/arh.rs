@@ -74,8 +74,10 @@ pub struct FileTable {
 #[binread]
 #[br(map = |raw: RawDictNode| raw.into())]
 pub enum DictNode {
-    /// Raw repr: previous < 0
+    /// Raw repr: previous < 0 and next < 0
     Free,
+    /// Raw repr: previous < 0 and next >= 0
+    Root { next: i32 },
     /// Raw repr: previous >= 0 and next >= 0
     Occupied { previous: i32, next: i32 },
     /// Raw repr: previous >= 0 and next < 0
@@ -184,11 +186,7 @@ impl PathDictionary {
             let cur_idx = node_idx;
             node_idx = prev.try_into().unwrap();
             node = &self.nodes[node_idx];
-            path.push(
-                (cur_idx as i32 ^ node.get_next().unwrap_or_default())
-                    .try_into()
-                    .unwrap(),
-            );
+            path.push((cur_idx as i32 ^ node.next()).try_into().unwrap());
         }
 
         path.reverse();
@@ -247,7 +245,7 @@ impl DictNode {
     }
 
     pub fn next_after_chr(&self, ascii: u8) -> i32 {
-        self.get_next().unwrap_or_default() ^ ascii as i32
+        self.next() ^ ascii as i32
     }
 
     pub fn is_child(&self, parent: i32) -> bool {
@@ -256,7 +254,7 @@ impl DictNode {
 
     pub fn get_previous(&self) -> Option<i32> {
         match self {
-            DictNode::Free => None,
+            DictNode::Free | DictNode::Root { .. } => None,
             DictNode::Occupied { previous, .. } => Some(*previous),
             DictNode::Leaf { previous, .. } => Some(*previous),
         }
@@ -264,7 +262,7 @@ impl DictNode {
 
     pub fn get_next(&self) -> Option<i32> {
         match self {
-            DictNode::Occupied { next, .. } => Some(*next),
+            DictNode::Occupied { next, .. } | DictNode::Root { next } => Some(*next),
             _ => None,
         }
     }
@@ -273,7 +271,8 @@ impl DictNode {
 impl From<RawDictNode> for DictNode {
     fn from(value: RawDictNode) -> Self {
         match (value.prev, value.next) {
-            (i32::MIN..=-1, _) => Self::Free,
+            (i32::MIN..=-1, i32::MIN..=-1) => Self::Free,
+            (i32::MIN..=-1, 0..) => Self::Root { next: value.next },
             (0.., i32::MIN..=-1) => Self::Leaf {
                 previous: value.prev,
                 string_offset: -value.next,
@@ -289,7 +288,8 @@ impl From<RawDictNode> for DictNode {
 impl From<DictNode> for RawDictNode {
     fn from(value: DictNode) -> Self {
         match value {
-            DictNode::Free => RawDictNode { next: 0, prev: -1 }, // Technically -id, shouldn't matter
+            DictNode::Free => RawDictNode { next: -1, prev: -1 }, // Technically -id, shouldn't matter
+            DictNode::Root { next } => RawDictNode { next, prev: -1 },
             DictNode::Occupied { previous, next } => RawDictNode {
                 next,
                 prev: previous,
