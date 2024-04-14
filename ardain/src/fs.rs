@@ -84,21 +84,17 @@ impl ArhFileSystem {
                 }
                 return None;
             }
-            println!("Visiting {cur:?} {path:?}");
             let next = cur.1.next_after_chr(path.as_bytes()[0]) as usize;
             if !nodes[next].is_child(cur.0 as i32) {
-                println!("NAC ({next}, {:?}) {cur:?}", nodes[next]);
                 return None;
             }
             cur = (next, &nodes[next]);
             path = &path[1..];
         }
-        println!("Ended at {cur:?}");
         let DictNode::Leaf { string_offset, .. } = *cur.1 else {
             return None;
         };
         let (remaining, file_id) = self.arh.strings().get_str_part_id(string_offset as usize);
-        println!("STRCK: {remaining:?} {path:?}");
 
         (remaining == path).then_some(file_id)
     }
@@ -123,29 +119,100 @@ impl ArhFileSystem {
                 }
                 let next = cur.1.next_after_chr(path.as_bytes()[0]) as usize;
                 if !nodes[next].is_child(cur.0 as i32) {
-                    println!("Detected break {path:?} {cur:?} {next} {:?}", nodes[next]);
                     break;
                 }
                 last_parent = cur.0;
                 cur = (next, &nodes[next]);
                 path = &path[1..];
             }
-            println!("Exited {path:?} CUR: {cur:?} LP: {last_parent}");
             ((cur.0, *cur.1), last_parent, path)
         };
+
+        let mut final_node = last;
+
+        if let DictNode::Leaf {
+            string_offset,
+            previous,
+        } = final_node.1
+        {
+            // If the final common node is a leaf, we need to split the path.
+            // Example: (-> denotes a XOR path)
+            // "text.txt" (t->e->-x->"t.txt")
+            // "text1.txt" (t->e->x->"???")
+            // Expected result:
+            // "text.txt" (t->-e->-x->t->".txt")
+            // "text1.txt" (t->-e->-x->t->"1.txt")
+
+            let (old_str, old_file) = self.arh.strings().get_str_part_id(string_offset as usize);
+            let old_str = old_str.to_string();
+            let mut old_str = old_str.as_str();
+            let mut node_block = self.arh.path_dictionary().nodes[previous as usize].next();
+            let mut last = final_node.0 as i32;
+
+            while !path.is_empty()
+                && !old_str.is_empty()
+                && old_str.as_bytes()[0] == path.as_bytes()[0]
+            {
+                // Continue the XOR path while characters match
+                let chr = old_str.as_bytes()[0] as i32;
+                let node_idx = (node_block ^ chr) as usize;
+                let next_node = self.arh.path_dictionary().nodes[node_idx as usize];
+                let mut next = 0;
+                if next_node.is_free() {
+                    // Next node is free, occupy it
+                    next = node_idx;
+                    self.arh.path_dictionary_mut().nodes[next] = DictNode::Occupied {
+                        previous: last,
+                        next: 0xFEFE,
+                    };
+                    self.arh.path_dictionary_mut().nodes[last as usize].attach_next(node_block);
+                } else {
+                    // Otherwise, allocate a block
+                    node_block = self
+                        .arh
+                        .path_dictionary_mut()
+                        .allocate_new_block(last as i32) as i32;
+                    next = node_block as usize ^ path.as_bytes()[0] as usize;
+                    self.arh.path_dictionary_mut().nodes[next] = DictNode::Occupied {
+                        previous: last,
+                        next: 0xBADD,
+                    };
+                }
+                last = next as i32;
+                old_str = &old_str[1..];
+                path = &path[1..];
+            }
+
+            // Found a level where the two strings differ. Make a block for them, copy the leaf node
+            // to it and pass it on.
+            let next_block = self.arh.path_dictionary_mut().allocate_new_block(last);
+            self.arh.path_dictionary_mut().nodes[last as usize].attach_next(next_block as i32);
+
+            if !old_str.is_empty() {
+                let id = self.arh.strings_mut().push(&old_str[1..], old_file);
+                let nodes = &mut self.arh.path_dictionary_mut().nodes;
+                let idx = next_block ^ old_str.as_bytes()[0] as usize;
+                nodes[idx] = DictNode::Leaf {
+                    previous: last,
+                    string_offset: id,
+                };
+            }
+
+            let final_idx = next_block ^ path.as_bytes()[0] as usize;
+            final_node = (final_idx, self.arh.path_dictionary().nodes[final_idx]);
+            last_parent = last as usize;
+            path = &path[1..];
+        }
 
         // We need to diverge from the existing path. If the next expected node is free,
         // we occupy it with the rest of the name. Otherwise, we must move the previous node
         // alongside all its children to a new location that lets us add the new node.
-        let mut final_node = last;
-
         if !final_node.1.is_free() {
             let idx = self
                 .arh
                 .path_dictionary_mut()
                 .allocate_new_block(final_node.0 as i32)
                 ^ path.as_bytes()[0] as usize;
-            println!("Final node not free, allocated {idx}");
             last_parent = final_node.0;
             final_node = (idx, self.arh.path_dictionary().nodes[idx as usize]);
             path = &path[1..];
@@ -162,7 +229,6 @@ impl ArhFileSystem {
         };
         let id = self.arh.file_table.push_entry(meta);
         let str_offset = self.arh.strings_mut().push(path, id);
-        println!("{final_node:?} <= Leaf {last_parent} -{str_offset}");
         self.arh.path_dictionary_mut().nodes[final_node.0] = DictNode::Leaf {
             previous: last_parent as i32,
             string_offset: str_offset,

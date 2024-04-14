@@ -211,54 +211,49 @@ impl PathDictionary {
         }
 
         // Copy old block.
-        let next = self.nodes[previous_node as usize].next();
-        for c in 0..BLOCK_SIZE as i32 {
-            // Select the characters that are actually children
-            let Some(node) = (next ^ c)
-                .try_into()
-                .ok()
-                .and_then(|i: usize| self.nodes.get(i))
-                .copied()
-            else {
-                continue;
-            };
-            if !node.is_child(previous_node) {
-                continue;
-            }
+        if let Some(next) = self.nodes[previous_node as usize].get_next() {
+            for c in 0..BLOCK_SIZE as i32 {
+                // Select the characters that are actually children
+                let Some(node) = (next ^ c)
+                    .try_into()
+                    .ok()
+                    .and_then(|i: usize| self.nodes.get(i))
+                    .copied()
+                else {
+                    continue;
+                };
+                if !node.is_child(previous_node) {
+                    continue;
+                }
 
-            // Then, copy the old child node to the new block
+                // Then, copy the old child node to the new block
 
-            let from_idx = next ^ c;
-            let to_idx = offset ^ c as usize;
-            println!(
-                "[CHR {}] Copying {node:?} to {}",
-                char::from_u32(c as u32).unwrap(),
-                to_idx
-            );
-            self.nodes[to_idx] = node;
+                let from_idx = next ^ c;
+                let to_idx = offset ^ c as usize;
+                self.nodes[to_idx] = node;
 
-            // Lastly, fix the links to each child's children (the `previous` value on each
-            // grandchild must match the child's index)
-            if let Some(next) = node.get_next() {
-                // Again, find the characters that make grandchild nodes
-                for c in 0..BLOCK_SIZE as i32 {
-                    if let Some(node) = (next ^ c)
-                        .try_into()
-                        .ok()
-                        .and_then(|i: usize| self.nodes.get(i))
-                        .copied()
-                    {
-                        if node.is_child(from_idx) {
-                            // Fix the link
-                            println!("Attaching PREV {} => {}", next ^ c as i32, to_idx);
-                            self.nodes[(next ^ c) as usize].attach_previous(to_idx as i32);
+                // Lastly, fix the links to each child's children (the `previous` value on each
+                // grandchild must match the child's index)
+                if let Some(next) = node.get_next() {
+                    // Again, find the characters that make grandchild nodes
+                    for c in 0..BLOCK_SIZE as i32 {
+                        if let Some(node) = (next ^ c)
+                            .try_into()
+                            .ok()
+                            .and_then(|i: usize| self.nodes.get(i))
+                            .copied()
+                        {
+                            if node.is_child(from_idx) {
+                                // Fix the link
+                                self.nodes[(next ^ c) as usize].attach_previous(to_idx as i32);
+                            }
                         }
                     }
                 }
-            }
 
-            // Child was fully moved, replace the initial slot with a free node
-            self.nodes[from_idx as usize] = DictNode::Free;
+                // Child was fully moved, replace the initial slot with a free node
+                self.nodes[from_idx as usize] = DictNode::Free;
+            }
         }
         // At the end, fix back links for source node (see function docs)
         self.nodes[previous_node as usize].attach_next(offset as i32);
@@ -329,16 +324,21 @@ impl DictNode {
         }
     }
 
-    fn attach_next(&mut self, next_node: i32) {
+    pub fn attach_next(&mut self, next_node: i32) {
         match self {
             v @ DictNode::Free => *v = DictNode::Root { next: next_node },
             DictNode::Root { next } => *next = next_node,
             DictNode::Occupied { next, .. } => *next = next_node,
-            DictNode::Leaf { .. } => panic!("cannot attach_next to leaf node"),
+            DictNode::Leaf { previous, .. } => {
+                *self = DictNode::Occupied {
+                    previous: *previous,
+                    next: next_node,
+                }
+            }
         }
     }
 
-    fn attach_previous(&mut self, prev_node: i32) {
+    pub fn attach_previous(&mut self, prev_node: i32) {
         match self {
             DictNode::Free => panic!("cannot attach_previous to free node"),
             DictNode::Root { next } => {
