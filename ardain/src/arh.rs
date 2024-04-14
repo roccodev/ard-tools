@@ -58,7 +58,7 @@ pub struct StringTable {
 #[binread]
 #[br(import { len: u32, key: u32 })]
 pub struct PathDictionary {
-    #[br(args { count: usize::try_from(len).unwrap() / size_of::<DictNode>() }, map_stream = |reader| EncryptedSection::decrypt(reader, len, key).expect("TODO"))]
+    #[br(args { count: usize::try_from(len).unwrap() / size_of::<RawDictNode>() }, map_stream = |reader| EncryptedSection::decrypt(reader, len, key).expect("TODO"))]
     pub nodes: Vec<DictNode>,
 }
 
@@ -70,9 +70,21 @@ pub struct FileTable {
     files: Vec<FileMeta>,
 }
 
+#[derive(Debug, PartialEq, Eq, Clone, Copy)]
+#[binread]
+#[br(map = |raw: RawDictNode| raw.into())]
+pub enum DictNode {
+    /// Raw repr: previous < 0
+    Free,
+    /// Raw repr: previous >= 0 and next >= 0
+    Occupied { previous: i32, next: i32 },
+    /// Raw repr: previous >= 0 and next < 0
+    Leaf { previous: i32, string_offset: i32 },
+}
+
 #[derive(Debug, PartialEq, Clone, Copy)]
 #[binread]
-pub struct DictNode {
+pub struct RawDictNode {
     pub next: i32,
     pub prev: i32,
 }
@@ -157,20 +169,26 @@ impl StringTable {
 impl PathDictionary {
     pub fn get_full_path(&self, mut node_idx: usize, strings: &StringTable) -> String {
         let mut node = &self.nodes[node_idx];
-        assert!(node.next < 0, "must start from a leaf node");
 
+        let DictNode::Leaf { string_offset, .. } = *node else {
+            panic!("must start from a leaf node")
+        };
         let mut path = strings
-            .get_str_part_id(-node.next as usize)
+            .get_str_part_id(string_offset as usize)
             .0
             .to_string()
             .into_bytes();
         path.reverse();
 
-        while node.next != 0 {
+        while let Some(prev) = node.get_previous() {
             let cur_idx = node_idx;
-            node_idx = node.prev.try_into().unwrap();
+            node_idx = prev.try_into().unwrap();
             node = &self.nodes[node_idx];
-            path.push((cur_idx as i32 ^ node.next).try_into().unwrap());
+            path.push(
+                (cur_idx as i32 ^ node.get_next().unwrap_or_default())
+                    .try_into()
+                    .unwrap(),
+            );
         }
 
         path.reverse();
@@ -182,7 +200,7 @@ impl PathDictionary {
         let offset = self.nodes.len();
         self.nodes.reserve_exact(0x80);
         for _ in 0..0x80 {
-            self.nodes.push(DictNode { next: 0, prev: 0 });
+            self.nodes.push(DictNode::Free);
         }
         offset
     }
@@ -208,5 +226,81 @@ impl FileTable {
         meta.id = id;
         self.files.push(meta);
         id
+    }
+}
+
+impl DictNode {
+    pub fn is_leaf(&self) -> bool {
+        matches!(self, Self::Leaf { .. })
+    }
+
+    pub fn is_free(&self) -> bool {
+        *self == Self::Free
+    }
+
+    pub fn previous(&self) -> i32 {
+        self.get_previous().unwrap()
+    }
+
+    pub fn next(&self) -> i32 {
+        self.get_next().unwrap()
+    }
+
+    pub fn next_after_chr(&self, ascii: u8) -> i32 {
+        self.get_next().unwrap_or_default() ^ ascii as i32
+    }
+
+    pub fn is_child(&self, parent: i32) -> bool {
+        self.get_previous().is_some_and(|prev| prev == parent)
+    }
+
+    pub fn get_previous(&self) -> Option<i32> {
+        match self {
+            DictNode::Free => None,
+            DictNode::Occupied { previous, .. } => Some(*previous),
+            DictNode::Leaf { previous, .. } => Some(*previous),
+        }
+    }
+
+    pub fn get_next(&self) -> Option<i32> {
+        match self {
+            DictNode::Occupied { next, .. } => Some(*next),
+            _ => None,
+        }
+    }
+}
+
+impl From<RawDictNode> for DictNode {
+    fn from(value: RawDictNode) -> Self {
+        match (value.prev, value.next) {
+            (i32::MIN..=-1, _) => Self::Free,
+            (0.., i32::MIN..=-1) => Self::Leaf {
+                previous: value.prev,
+                string_offset: -value.next,
+            },
+            (0.., 0..) => Self::Occupied {
+                previous: value.prev,
+                next: value.next,
+            },
+        }
+    }
+}
+
+impl From<DictNode> for RawDictNode {
+    fn from(value: DictNode) -> Self {
+        match value {
+            DictNode::Free => RawDictNode { next: 0, prev: -1 }, // Technically -id, shouldn't matter
+            DictNode::Occupied { previous, next } => RawDictNode {
+                next,
+                prev: previous,
+            },
+            DictNode::Leaf {
+                previous,
+                string_offset,
+            } => RawDictNode {
+                next: -string_offset,
+                prev: previous,
+            },
+        }
     }
 }
