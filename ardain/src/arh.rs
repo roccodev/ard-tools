@@ -193,13 +193,75 @@ impl PathDictionary {
         String::from_utf8(path).unwrap()
     }
 
-    /// Allocates a new node block (0x80 entries) and returns the first offset of the block.
-    pub fn allocate_new_block(&mut self) -> usize {
-        let offset = self.nodes.len();
-        self.nodes.reserve_exact(0x80);
-        for _ in 0..0x80 {
+    /// Allocates a new node block (0x80 entries) and returns the first offset of the block as the
+    /// base value to XOR from.
+    ///
+    /// ## Params
+    ///
+    /// * `previous_node`: the parent node. A new block is allocated and all its children are
+    /// moved to that block. At the end, the `next` value in `previous_node` is updated accordingly.
+    pub fn allocate_new_block(&mut self, previous_node: i32) -> usize {
+        const BLOCK_SIZE: usize = 0x80;
+        let mut offset = self.nodes.len();
+        // Offset should be the center point wrt XOR with a value in [0, BLOCK_SIZE-1]. In other words,
+        // `offset ^ x` should be in [nodes.len(), nodes.len()+BLOCK_SIZE-1] for all x in [0, BLOCK_SIZE-1].
+        self.nodes.reserve_exact(BLOCK_SIZE);
+        for _ in 0..BLOCK_SIZE {
             self.nodes.push(DictNode::Free);
         }
+
+        // Copy old block.
+        let next = self.nodes[previous_node as usize].next();
+        for c in 0..BLOCK_SIZE as i32 {
+            // Select the characters that are actually children
+            let Some(node) = (next ^ c)
+                .try_into()
+                .ok()
+                .and_then(|i: usize| self.nodes.get(i))
+                .copied()
+            else {
+                continue;
+            };
+            if !node.is_child(previous_node) {
+                continue;
+            }
+
+            // Then, copy the old child node to the new block
+
+            let from_idx = next ^ c;
+            let to_idx = offset ^ c as usize;
+            println!(
+                "[CHR {}] Copying {node:?} to {}",
+                char::from_u32(c as u32).unwrap(),
+                to_idx
+            );
+            self.nodes[to_idx] = node;
+
+            // Lastly, fix the links to each child's children (the `previous` value on each
+            // grandchild must match the child's index)
+            if let Some(next) = node.get_next() {
+                // Again, find the characters that make grandchild nodes
+                for c in 0..BLOCK_SIZE as i32 {
+                    if let Some(node) = (next ^ c)
+                        .try_into()
+                        .ok()
+                        .and_then(|i: usize| self.nodes.get(i))
+                        .copied()
+                    {
+                        if node.is_child(from_idx) {
+                            // Fix the link
+                            println!("Attaching PREV {} => {}", next ^ c as i32, to_idx);
+                            self.nodes[(next ^ c) as usize].attach_previous(to_idx as i32);
+                        }
+                    }
+                }
+            }
+
+            // Child was fully moved, replace the initial slot with a free node
+            self.nodes[from_idx as usize] = DictNode::Free;
+        }
+        // At the end, fix back links for source node (see function docs)
+        self.nodes[previous_node as usize].attach_next(offset as i32);
         offset
     }
 }
@@ -264,6 +326,30 @@ impl DictNode {
         match self {
             DictNode::Occupied { next, .. } | DictNode::Root { next } => Some(*next),
             _ => None,
+        }
+    }
+
+    fn attach_next(&mut self, next_node: i32) {
+        match self {
+            v @ DictNode::Free => *v = DictNode::Root { next: next_node },
+            DictNode::Root { next } => *next = next_node,
+            DictNode::Occupied { next, .. } => *next = next_node,
+            DictNode::Leaf { .. } => panic!("cannot attach_next to leaf node"),
+        }
+    }
+
+    fn attach_previous(&mut self, prev_node: i32) {
+        match self {
+            DictNode::Free => panic!("cannot attach_previous to free node"),
+            DictNode::Root { next } => {
+                *self = DictNode::Occupied {
+                    previous: prev_node,
+                    next: *next,
+                }
+            }
+            DictNode::Occupied { previous, .. } | DictNode::Leaf { previous, .. } => {
+                *previous = prev_node
+            }
         }
     }
 }

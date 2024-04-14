@@ -84,17 +84,22 @@ impl ArhFileSystem {
                 }
                 return None;
             }
+            println!("Visiting {cur:?} {path:?}");
             let next = cur.1.next_after_chr(path.as_bytes()[0]) as usize;
             if !nodes[next].is_child(cur.0 as i32) {
+                println!("NAC ({next}, {:?}) {cur:?}", nodes[next]);
                 return None;
             }
             cur = (next, &nodes[next]);
             path = &path[1..];
         }
+        println!("Ended at {cur:?}");
         let DictNode::Leaf { string_offset, .. } = *cur.1 else {
             return None;
         };
         let (remaining, file_id) = self.arh.strings().get_str_part_id(string_offset as usize);
+        println!("STRCK: {remaining:?} {path:?}");
+
         (remaining == path).then_some(file_id)
     }
 
@@ -106,8 +111,66 @@ impl ArhFileSystem {
         }
 
         // Follow existing paths
+        let (last, mut last_parent, mut path) = {
+            let nodes = &self.arh.path_dictionary().nodes;
+            let mut cur = (0usize, &nodes[0]);
+            let mut path = full_path;
+            let mut last_parent = 0;
 
-        todo!()
+            while !cur.1.is_leaf() {
+                if path.is_empty() {
+                    unreachable!("should have been reported as existing file");
+                }
+                let next = cur.1.next_after_chr(path.as_bytes()[0]) as usize;
+                if !nodes[next].is_child(cur.0 as i32) {
+                    println!("Detected break {path:?} {cur:?} {next} {:?}", nodes[next]);
+                    break;
+                }
+                last_parent = cur.0;
+                cur = (next, &nodes[next]);
+                path = &path[1..];
+            }
+            println!("Exited {path:?} CUR: {cur:?} LP: {last_parent}");
+            ((cur.0, *cur.1), last_parent, path)
+        };
+
+        // We need to diverge from the existing path. If the next expected node is free,
+        // we occupy it with the rest of the name. Otherwise, we must move the previous node
+        // alongside all its children to a new location that lets us add the new node.
+        let mut final_node = last;
+
+        if !final_node.1.is_free() {
+            let idx = self
+                .arh
+                .path_dictionary_mut()
+                .allocate_new_block(final_node.0 as i32)
+                ^ path.as_bytes()[0] as usize;
+            println!("Final node not free, allocated {idx}");
+            last_parent = final_node.0;
+            final_node = (idx, self.arh.path_dictionary().nodes[idx as usize]);
+            path = &path[1..];
+        }
+
+        // `final_node` is now a free node.
+
+        let meta = FileMeta {
+            offset: 0,
+            compressed_size: 0,
+            uncompressed_size: 0,
+            _unk: 0,
+            id: 0,
+        };
+        let id = self.arh.file_table.push_entry(meta);
+        let str_offset = self.arh.strings_mut().push(path, id);
+        println!("{final_node:?} <= Leaf {last_parent} -{str_offset}");
+        self.arh.path_dictionary_mut().nodes[final_node.0] = DictNode::Leaf {
+            previous: last_parent as i32,
+            string_offset: str_offset,
+        };
+
+        // Update directory tree
+        self.dir_tree.insert_file_entry(full_path.to_string());
+        Ok(self.arh.file_table.get_meta_mut(id).unwrap())
     }
 
     pub fn delete(&mut self, path: &str) -> Result<()> {
