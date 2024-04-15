@@ -50,6 +50,87 @@ fn create_error_into_extended() {
     check_reachable(&arh);
 }
 
+#[test]
+fn delete_files() {
+    let mut arh = load_arh();
+    let files = [
+        "/bdat/btl.bdat",
+        "/bdat/fld.bdat",
+        "/chr/tex/nx/m/fe85e8cc.wismt",
+        "/map/ma66a.wismhd",
+        "/map/ma66a.wismda",
+        "/data_sheet/data_sheet.bin",
+    ];
+    let create_and_delete = [
+        "/bdat/test.bdat2",
+        "/bdat/test.bdat3",
+        "/bdat/test.bdat4",
+        "/bdat/test.bdat50",
+        "/bdat/btl.bdat",
+        "/in_root",
+    ];
+    for f in files {
+        arh.delete_file(f).unwrap();
+        println!("Checking that {f} is no longer reachable");
+        assert!(!arh.exists(f));
+        println!("Checking reachable after removing {f}");
+        check_reachable(&arh);
+    }
+    for f in create_and_delete {
+        arh.create_file(f).unwrap();
+        println!("Checking that {f} is now reachable");
+        assert!(arh.exists(f));
+        println!("Checking reachable after adding {f}");
+        check_reachable(&arh);
+    }
+    for f in create_and_delete.iter().rev() {
+        arh.delete_file(f).unwrap();
+        println!("Checking that {f} is no longer reachable");
+        assert!(!arh.exists(f));
+        println!("Checking reachable after removing {f}");
+        check_reachable(&arh);
+    }
+}
+
+#[test]
+fn rename_files() {
+    let mut arh = load_arh();
+    let files = [
+        "/bdat/btl.bdat",
+        "/bdat/fld.bdat",
+        "/chr/tex/nx/m/fe85e8cc.wismt",
+        "/map/ma66a.wismhd",
+        "/map/ma66a.wismda",
+        "/data_sheet/data_sheet.bin",
+    ];
+    for f in files {
+        // Rename each file to the reverse of its components
+        // (e.g. "/bdat/btl.bdat" -> "/tadb/tadb.ltb")
+        let reverse_path = format!(
+            "/{}",
+            f.split("/")
+                .map(|s| {
+                    s.chars()
+                        .rev()
+                        .chain(std::iter::once('/'))
+                        .collect::<String>()
+                })
+                .collect::<String>()
+        );
+        let reverse_path = &reverse_path[..reverse_path.len() - 1];
+        println!("Checking that {f} was reachable");
+        let meta = *arh.get_file_info(f).unwrap();
+        arh.rename_file(f, &reverse_path).unwrap();
+        println!("Checking that {f} is no longer reachable");
+        assert!(!arh.exists(f));
+        println!("Checking that {reverse_path} is now reachable");
+        let new_meta = *arh.get_file_info(reverse_path).unwrap();
+        assert_eq!(meta, new_meta);
+        println!("Checking reachable after renaming {f}");
+        check_reachable(&arh);
+    }
+}
+
 fn check_reachable(arh: &ArhFileSystem) {
     let node = arh.get_dir("/").unwrap();
     let mut queue = VecDeque::new();

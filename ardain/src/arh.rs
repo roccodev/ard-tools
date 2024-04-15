@@ -93,7 +93,7 @@ pub struct RawDictNode {
     pub prev: i32,
 }
 
-#[derive(Debug, PartialEq, Clone, Copy)]
+#[derive(Debug, Default, PartialEq, Clone, Copy)]
 #[binread]
 pub struct FileMeta {
     pub offset: u64,
@@ -273,17 +273,15 @@ impl PathDictionary {
 
 impl FileTable {
     pub fn get_meta(&self, file_id: u32) -> Option<&FileMeta> {
-        self.files
-            .binary_search_by_key(&file_id, |f| f.id)
+        usize::try_from(file_id)
             .ok()
-            .map(|id| &self.files[id])
+            .and_then(|id| self.files.get(id))
     }
 
     pub fn get_meta_mut(&mut self, file_id: u32) -> Option<&mut FileMeta> {
-        self.files
-            .binary_search_by_key(&file_id, |f| f.id)
+        usize::try_from(file_id)
             .ok()
-            .map(|id| &mut self.files[id])
+            .and_then(|id| self.files.get_mut(id))
     }
 
     pub fn push_entry(&mut self, mut meta: FileMeta) -> u32 {
@@ -291,6 +289,12 @@ impl FileTable {
         meta.id = id;
         self.files.push(meta);
         id
+    }
+
+    pub fn delete_entry(&mut self, file_id: u32) {
+        if let Some(file) = self.files.get_mut(file_id as usize) {
+            *file = FileMeta::default();
+        }
     }
 }
 

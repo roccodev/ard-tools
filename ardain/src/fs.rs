@@ -1,4 +1,7 @@
-use std::io::{Read, Seek};
+use std::{
+    collections::VecDeque,
+    io::{Read, Seek},
+};
 
 use binrw::{BinRead, BinResult};
 
@@ -9,6 +12,8 @@ use crate::{
 
 pub struct ArhFileSystem {
     arh: Arh,
+    // Not part of the ARH format, but we keep one to make enumerating and traversing directories
+    // easier.
     dir_tree: DirNode,
 }
 
@@ -41,12 +46,12 @@ impl ArhFileSystem {
 
     pub fn get_file_info(&self, path: &str) -> Option<&FileMeta> {
         self.get_file_id(path)
-            .and_then(|id| self.arh.file_table.get_meta(id))
+            .and_then(|(id, _)| self.arh.file_table.get_meta(id))
     }
 
     pub fn get_file_info_mut(&mut self, path: &str) -> Option<&mut FileMeta> {
         self.get_file_id(path)
-            .and_then(|id| self.arh.file_table.get_meta_mut(id))
+            .and_then(|(id, _)| self.arh.file_table.get_meta_mut(id))
     }
 
     pub fn get_dir(&self, path: &str) -> Option<&DirNode> {
@@ -63,6 +68,7 @@ impl ArhFileSystem {
             let DirEntry::Directory { ref children } = node.entry else {
                 return None;
             };
+
             let child = children
                 .binary_search_by_key(part, |c| c.name.as_str())
                 .ok()?;
@@ -71,24 +77,25 @@ impl ArhFileSystem {
         matches!(node.entry, DirEntry::Directory { .. }).then_some(node)
     }
 
-    fn get_file_id(&self, mut path: &str) -> Option<u32> {
-        let nodes = &self.arh.path_dictionary().nodes;
-        let mut cur = (0usize, &nodes[0]);
+    /// Returns the file ID and leaf node ID for the given path.
+    fn get_file_id(&self, mut path: &str) -> Option<(u32, i32)> {
+        let nodes = &self.arh.path_dictionary();
+        let mut cur = (0, nodes.node(0));
 
         while !cur.1.is_leaf() {
             if path.is_empty() {
                 // If we've consumed the whole path, the file exists iff there are no more
                 // nodes to be visited.
-                if cur.1.is_child(cur.0 as i32) {
+                if cur.1.is_child(cur.0) {
                     break;
                 }
                 return None;
             }
-            let next = cur.1.next_after_chr(path.as_bytes()[0]) as usize;
-            if !nodes[next].is_child(cur.0 as i32) {
+            let next = cur.1.next_after_chr(path.as_bytes()[0]);
+            if !nodes.node(next).is_child(cur.0) {
                 return None;
             }
-            cur = (next, &nodes[next]);
+            cur = (next, nodes.node(next));
             path = &path[1..];
         }
         let DictNode::Leaf { string_offset, .. } = *cur.1 else {
@@ -96,7 +103,7 @@ impl ArhFileSystem {
         };
         let (remaining, file_id) = self.arh.strings().get_str_part_id(string_offset as usize);
 
-        (remaining == path).then_some(file_id)
+        (remaining == path).then_some((file_id, cur.0))
     }
 
     // Structural modifications
@@ -246,13 +253,34 @@ impl ArhFileSystem {
         Ok(self.arh.file_table.get_meta_mut(id).unwrap())
     }
 
-    pub fn delete(&mut self, path: &str) -> Result<()> {
+    pub fn delete_file(&mut self, path: &str) -> Result<()> {
+        let (file_id, leaf_id) = self.get_file_id(path).ok_or(Error::FsNoEntry)?;
+
+        // Probably not optimal (we potentially leave unused nodes dangling),
+        // but we can just free the leaf node
+        *self.arh.path_dictionary_mut().node_mut(leaf_id) = DictNode::Free;
+
+        // For the file entry, it's not as simple as it looks. While FileMeta has an ID field,
+        // the game actually indexes into the file table instead of filtering by that field.
+        // Because there is no longer a leaf pointing to that file node, we can zero out its
+        // contents, and recycle it later.
+        self.arh.file_table.delete_entry(file_id);
+
+        // Update directory tree
+        self.dir_tree.remove_file_entry(path);
+        Ok(())
+    }
+
+    /// Attempts to delete a directory.
+    ///
+    /// If `recursive` is `false` and the directory has subdirectories, an error is returned.
+    pub fn delete_dir(&mut self, path: &str, recursive: bool) -> Result<()> {
         todo!()
     }
 
-    pub fn rename(&mut self, path: &str, new_path: &str) -> Result<()> {
+    pub fn rename_file(&mut self, path: &str, new_path: &str) -> Result<()> {
         let meta = self.get_file_info(path).copied().ok_or(Error::FsNoEntry)?;
-        self.delete(path)?;
+        self.delete_file(path)?;
         self.create_file(new_path)?.clone_from(&meta);
         Ok(())
     }
@@ -285,8 +313,7 @@ impl DirNode {
                 let DirEntry::Directory { ref mut children } = node.entry else {
                     continue;
                 };
-                let name = comp.to_string();
-                match children.binary_search_by_key(&&name, |c| &c.name) {
+                match children.binary_search_by_key(comp, |c| &c.name) {
                     Ok(i) => {
                         // File/Subdirectory already present, proceed from there
                         &mut children[i]
@@ -294,7 +321,7 @@ impl DirNode {
                     Err(i) => {
                         // Need to create file or subdirectory
                         let dir_node = DirNode {
-                            name,
+                            name: comp.to_string(),
                             entry: if comp_idx != parts.len() - 2 {
                                 DirEntry::Directory {
                                     children: Vec::new(),
@@ -310,5 +337,35 @@ impl DirNode {
             };
             node = next_node;
         }
+    }
+
+    fn remove_file_entry(&mut self, path: &str) {
+        assert!(path.starts_with("/"), "path must start at the root");
+        let parts = path.split("/").collect::<Vec<_>>();
+
+        fn delete_node(node: &mut DirNode, parts: &[&str]) -> bool {
+            let Some(part) = parts.first() else {
+                return true;
+            };
+            if let DirEntry::Directory { ref mut children } = node.entry {
+                if let Ok(i) = children.binary_search_by_key(part, |c| &c.name) {
+                    let child = &mut children[i];
+                    if matches!(child.entry, DirEntry::File) {
+                        children.remove(i);
+                    } else {
+                        if !delete_node(&mut children[i], &parts[1..]) {
+                            // Remove empty directories
+                            children.remove(i);
+                        }
+                    }
+                    if children.is_empty() {
+                        return false;
+                    }
+                }
+            }
+            true
+        }
+
+        delete_node(self, &parts[1..]);
     }
 }

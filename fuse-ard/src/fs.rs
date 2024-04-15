@@ -10,7 +10,8 @@ use std::{
 use anyhow::Result;
 use ardain::{ArdReader, ArhFileSystem, DirEntry, DirNode, FileMeta};
 use fuser::{
-    FileAttr, FileType, Filesystem, ReplyAttr, ReplyData, ReplyDirectory, ReplyEntry, Request,
+    FileAttr, FileType, Filesystem, ReplyAttr, ReplyData, ReplyDirectory, ReplyEmpty, ReplyEntry,
+    Request,
 };
 use libc::{ENOENT, ENOTDIR, ENOTSUP};
 use log::debug;
@@ -105,6 +106,8 @@ impl Filesystem for ArhFuseSystem {
             reply.attr(&TTL, &make_file_attr(file, ino));
             return;
         }
+        debug!("[GETATTR:{name}] no match");
+        reply.error(ENOENT);
     }
 
     fn readdir(
@@ -199,7 +202,7 @@ impl Filesystem for ArhFuseSystem {
 
     fn mknod(
         &mut self,
-        _req: &Request<'_>,
+        _req: &Request,
         parent: u64,
         name: &OsStr,
         _mode: u32,
@@ -218,6 +221,48 @@ impl Filesystem for ArhFuseSystem {
             e @ Err(_) => {
                 e.unwrap(); // TODO
             }
+        }
+    }
+
+    fn unlink(&mut self, _req: &Request, parent: u64, name: &OsStr, reply: ReplyEmpty) {
+        let Some(name) = self.build_path(parent, name) else {
+            debug!("[UNLINK] invalid parent inode {parent}");
+            reply.error(ENOENT);
+            return;
+        };
+        match self.fs.delete_file(&name) {
+            Ok(_) => reply.ok(),
+            e @ Err(_) => {
+                e.unwrap();
+            } // TODO (libc convert)
+        }
+    }
+
+    fn rename(
+        &mut self,
+        _req: &Request,
+        old_parent: u64,
+        old_name: &OsStr,
+        new_parent: u64,
+        new_name: &OsStr,
+        _flags: u32,
+        reply: ReplyEmpty,
+    ) {
+        let Some(old_name) = self.build_path(old_parent, old_name) else {
+            debug!("[RENAME] invalid parent inode {old_parent}");
+            reply.error(ENOENT);
+            return;
+        };
+        let Some(new_name) = self.build_path(new_parent, new_name) else {
+            debug!("[RENAME] invalid parent inode {new_parent}");
+            reply.error(ENOENT);
+            return;
+        };
+        match self.fs.rename_file(&old_name, &new_name) {
+            Ok(_) => reply.ok(),
+            e @ Err(_) => {
+                e.unwrap();
+            } // TODO (libc convert)
         }
     }
 }
