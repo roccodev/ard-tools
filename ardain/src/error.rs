@@ -18,4 +18,6 @@ pub enum Error {
     FsNoEntry,
     #[error("FS: an entry already exists with this name")]
     FsAlreadyExists,
+    #[error("FS: extended file names are not supported (e.g. \"a.tar\", \"a.tar.gz\")")]
+    FsFileNameExtended,
 }

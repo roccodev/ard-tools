@@ -15,6 +15,7 @@ fn create_files() {
         "/bdat/test.bdat2",
         "/bdat/test.bdat3",
         "/bdat/test.bdat4",
+        "/bdat/test.bdat50",
         "/bdat/endpath.1",
         "/bdat/endpath.2",
         "/bdat/endpath.48",
@@ -29,6 +30,26 @@ fn create_files() {
     }
 }
 
+#[test]
+#[should_panic = "FsFileNameExtended"]
+fn create_error_extended() {
+    let mut arh = load_arh();
+    let files = ["/file.tar", "/file.tar.gz"];
+    for f in files {
+        arh.create_file(f).unwrap();
+        println!("Checking after adding {f}");
+        check_reachable(&arh);
+    }
+}
+
+#[test]
+#[should_panic = "FsFileNameExtended"]
+fn create_error_into_extended() {
+    let mut arh = load_arh();
+    arh.create_file("/bdat/fld.bd").unwrap();
+    check_reachable(&arh);
+}
+
 fn check_reachable(arh: &ArhFileSystem) {
     let node = arh.get_dir("/").unwrap();
     let mut queue = VecDeque::new();
@@ -37,10 +58,7 @@ fn check_reachable(arh: &ArhFileSystem) {
         match &node.entry {
             DirEntry::File => {
                 let path = &format!("{path}/{}", node.name)[2..];
-                assert!(
-                    arh.get_file_info(path).is_some(),
-                    "{path} did not match file infos"
-                );
+                assert!(arh.exists(path), "{path} does not exist");
             }
             DirEntry::Directory { children } => {
                 for child in children {

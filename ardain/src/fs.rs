@@ -157,7 +157,7 @@ impl ArhFileSystem {
                 let chr = old_str.as_bytes()[0] as i32;
                 let node_idx = node_block ^ chr;
                 let next_node = self.arh.path_dictionary().node(node_idx);
-                let mut next = 0;
+                let next;
                 if next_node.is_free() {
                     // Next node is free, occupy it
                     next = node_idx;
@@ -186,6 +186,10 @@ impl ArhFileSystem {
                 path = &path[1..];
             }
 
+            if path.is_empty() || old_str.is_empty() {
+                return Err(Error::FsFileNameExtended);
+            }
+
             // Found a level where the two strings differ. Make a block for them, copy the leaf node
             // to it and pass it on.
             let next_block = self.arh.path_dictionary_mut().allocate_new_block(last);
@@ -194,14 +198,12 @@ impl ArhFileSystem {
                 .node_mut(last)
                 .attach_next(next_block as i32);
 
-            if !old_str.is_empty() {
-                let id = self.arh.strings_mut().push(&old_str[1..], old_file);
-                let idx = next_block ^ old_str.as_bytes()[0] as i32;
-                *self.arh.path_dictionary_mut().node_mut(idx) = DictNode::Leaf {
-                    previous: last,
-                    string_offset: id,
-                };
-            }
+            let id = self.arh.strings_mut().push(&old_str[1..], old_file);
+            let idx = next_block ^ old_str.as_bytes()[0] as i32;
+            *self.arh.path_dictionary_mut().node_mut(idx) = DictNode::Leaf {
+                previous: last,
+                string_offset: id,
+            };
 
             let final_idx = next_block ^ path.as_bytes()[0] as i32;
             final_node = (final_idx, *self.arh.path_dictionary().node(final_idx));
