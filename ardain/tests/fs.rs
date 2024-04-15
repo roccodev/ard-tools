@@ -72,21 +72,21 @@ fn delete_files() {
     for f in files {
         arh.delete_file(f).unwrap();
         println!("Checking that {f} is no longer reachable");
-        assert!(!arh.exists(f));
+        assert!(!arh.is_file(f));
         println!("Checking reachable after removing {f}");
         check_reachable(&arh);
     }
     for f in create_and_delete {
         arh.create_file(f).unwrap();
         println!("Checking that {f} is now reachable");
-        assert!(arh.exists(f));
+        assert!(arh.is_file(f));
         println!("Checking reachable after adding {f}");
         check_reachable(&arh);
     }
     for f in create_and_delete.iter().rev() {
         arh.delete_file(f).unwrap();
         println!("Checking that {f} is no longer reachable");
-        assert!(!arh.exists(f));
+        assert!(!arh.is_file(f));
         println!("Checking reachable after removing {f}");
         check_reachable(&arh);
     }
@@ -122,7 +122,7 @@ fn rename_files() {
         let meta = *arh.get_file_info(f).unwrap();
         arh.rename_file(f, &reverse_path).unwrap();
         println!("Checking that {f} is no longer reachable");
-        assert!(!arh.exists(f));
+        assert!(!arh.is_file(f));
         println!("Checking that {reverse_path} is now reachable");
         let new_meta = *arh.get_file_info(reverse_path).unwrap();
         assert_eq!(meta, new_meta);
@@ -139,7 +139,7 @@ fn check_reachable(arh: &ArhFileSystem) {
         match &node.entry {
             DirEntry::File => {
                 let path = &format!("{path}/{}", node.name)[2..];
-                assert!(arh.exists(path), "{path} does not exist");
+                assert!(arh.is_file(path), "{path} does not exist");
             }
             DirEntry::Directory { children } => {
                 for child in children {

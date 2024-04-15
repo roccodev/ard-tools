@@ -40,8 +40,16 @@ impl ArhFileSystem {
 
     // Node queries
 
-    pub fn exists(&self, path: &str) -> bool {
+    pub fn is_file(&self, path: &str) -> bool {
         self.get_file_info(path).is_some()
+    }
+
+    pub fn is_dir(&self, path: &str) -> bool {
+        self.get_dir(path).is_some()
+    }
+
+    pub fn exists(&self, path: &str) -> bool {
+        self.is_dir(path) || self.is_file(path)
     }
 
     pub fn get_file_info(&self, path: &str) -> Option<&FileMeta> {

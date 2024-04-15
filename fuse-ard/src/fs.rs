@@ -13,7 +13,7 @@ use fuser::{
     FileAttr, FileType, Filesystem, ReplyAttr, ReplyData, ReplyDirectory, ReplyEmpty, ReplyEntry,
     Request,
 };
-use libc::{ENOENT, ENOTDIR, ENOTEMPTY, ENOTSUP};
+use libc::{EEXIST, ENOENT, ENOTDIR, ENOTEMPTY, ENOTSUP};
 use log::debug;
 
 pub struct ArhFuseSystem {
@@ -250,6 +250,40 @@ impl Filesystem for ArhFuseSystem {
             e @ Err(_) => {
                 e.unwrap(); // TODO
             }
+        }
+    }
+
+    fn mkdir(
+        &mut self,
+        _req: &Request,
+        parent: u64,
+        name: &OsStr,
+        _mode: u32,
+        _umask: u32,
+        reply: ReplyEntry,
+    ) {
+        let Some(name) = self.build_path(parent, name) else {
+            debug!("[MKDIR] invalid parent inode {parent}");
+            reply.error(ENOENT);
+            return;
+        };
+        if self.fs.exists(&name) {
+            debug!("[MKDIR] entry already exists {name}");
+            reply.error(EEXIST);
+            return;
+        }
+        // The ARH format has no concept of directories, we create a hidden file to generate
+        // the directory structure. Directories are automatically deleted when they are empty.
+        let placeholder = format!("{name}/.fuse_ard_dir");
+        match self.fs.create_file(&placeholder) {
+            Ok(_) => {
+                let inode = self.get_inode_and_save(placeholder);
+                let dir = self.fs.get_dir(&name).unwrap();
+                reply.entry(&TTL, &make_dir_attr(dir, inode), 0);
+            }
+            e @ Err(_) => {
+                e.unwrap();
+            } // TODO
         }
     }
 
