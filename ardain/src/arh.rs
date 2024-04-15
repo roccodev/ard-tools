@@ -285,6 +285,7 @@ impl FileTable {
     }
 
     pub fn push_entry(&mut self, mut meta: FileMeta) -> u32 {
+        // TODO recycle deleted slots
         let id = self.files.len().try_into().expect("dir tree limit");
         meta.id = id;
         self.files.push(meta);

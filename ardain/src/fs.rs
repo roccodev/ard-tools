@@ -271,17 +271,32 @@ impl ArhFileSystem {
         Ok(())
     }
 
-    /// Attempts to delete a directory.
+    /// Deletes an empty directory.
     ///
-    /// If `recursive` is `false` and the directory has subdirectories, an error is returned.
-    pub fn delete_dir(&mut self, path: &str, recursive: bool) -> Result<()> {
-        todo!()
+    /// This only updates the in-memory directory tree, it has no effect on the underlying
+    /// file system, as the ARH format has no concept of directories.
+    pub fn delete_empty_dir(&mut self, path: &str) -> Result<()> {
+        self.dir_tree.remove_empty_dir(path);
+        Ok(())
     }
 
     pub fn rename_file(&mut self, path: &str, new_path: &str) -> Result<()> {
         let meta = self.get_file_info(path).copied().ok_or(Error::FsNoEntry)?;
+        // TODO: make atomic
         self.delete_file(path)?;
         self.create_file(new_path)?.clone_from(&meta);
+        Ok(())
+    }
+
+    pub fn rename_dir(&mut self, path: &str, new_path: &str) -> Result<()> {
+        let dir = self.get_dir(path).ok_or(Error::FsNoEntry)?;
+        let relative_paths = dir.children_paths();
+        for child in relative_paths {
+            // TODO: make atomic
+            let child = &child[1..];
+            self.rename_file(&format!("{path}/{child}"), &format!("{new_path}/{child}"))?;
+        }
+        self.dir_tree.remove_empty_dir(path);
         Ok(())
     }
 }
@@ -302,6 +317,37 @@ impl DirNode {
         }
 
         start
+    }
+
+    /// Returns the paths of all files and subdirectories (and their children), relative to
+    /// this directory node.
+    ///
+    /// Paths start with a '/' character.
+    fn children_paths(&self) -> Vec<String> {
+        let children = match &self.entry {
+            DirEntry::File => return vec![self.name.clone()],
+            DirEntry::Directory { children } => children,
+        };
+        let mut paths = Vec::new();
+        let mut stack = VecDeque::new();
+        for child in children {
+            stack.push_back((child, "".to_string()));
+        }
+
+        while let Some((node, path)) = stack.pop_back() {
+            match &node.entry {
+                DirEntry::File => {
+                    paths.push(format!("{path}/{}", node.name));
+                }
+                DirEntry::Directory { children } => {
+                    for child in children {
+                        stack.push_back((child, format!("{path}/{}", node.name)));
+                    }
+                }
+            }
+        }
+
+        paths
     }
 
     fn insert_file_entry(&mut self, path: String) {
@@ -355,7 +401,7 @@ impl DirNode {
                     } else {
                         if !delete_node(&mut children[i], &parts[1..]) {
                             // Remove empty directories
-                            children.remove(i);
+                            //children.remove(i);
                         }
                     }
                     if children.is_empty() {
@@ -367,5 +413,29 @@ impl DirNode {
         }
 
         delete_node(self, &parts[1..]);
+    }
+
+    fn remove_empty_dir(&mut self, path: &str) {
+        assert!(path.starts_with("/"), "path must start at the root");
+        let parts = path.split("/").collect::<Vec<_>>();
+        let mut node = self;
+
+        for (comp_idx, comp) in parts[1..].iter().enumerate() {
+            let next_node = {
+                let DirEntry::Directory { ref mut children } = node.entry else {
+                    continue;
+                };
+                if let Ok(i) = children.binary_search_by_key(comp, |c| &c.name) {
+                    if comp_idx == parts.len() - 2 {
+                        children.remove(i);
+                        return;
+                    }
+                    &mut children[i]
+                } else {
+                    return;
+                }
+            };
+            node = next_node;
+        }
     }
 }

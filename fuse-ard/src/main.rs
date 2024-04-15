@@ -31,7 +31,11 @@ fn main() {
     let fs = ArhFuseSystem::load(arh, ard).unwrap();
 
     let mount_point = matches.get_one::<String>("mount_point").unwrap();
-    let mut opts = vec![MountOption::CUSTOM("kernel_cache".to_string())];
+    let mut opts = vec![
+        MountOption::NoExec,
+        MountOption::NoAtime,
+        MountOption::CUSTOM("kernel_cache".to_string()),
+    ];
     if debug {
         opts.push(MountOption::CUSTOM("debug".to_string()));
     }
