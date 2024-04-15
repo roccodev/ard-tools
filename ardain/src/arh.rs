@@ -6,6 +6,8 @@ use std::{
 
 use binrw::{binread, BinRead};
 
+use crate::DirNode;
+
 const KEY_XOR: u32 = 0xF3F35353;
 
 #[derive(Debug, PartialEq, Clone)]
@@ -193,6 +195,14 @@ impl PathDictionary {
         String::from_utf8(path).unwrap()
     }
 
+    pub fn node(&self, index: i32) -> &DictNode {
+        &self.nodes[usize::try_from(index).expect("index >= 0")]
+    }
+
+    pub fn node_mut(&mut self, index: i32) -> &mut DictNode {
+        &mut self.nodes[usize::try_from(index).expect("index >= 0")]
+    }
+
     /// Allocates a new node block (0x80 entries) and returns the first offset of the block as the
     /// base value to XOR from.
     ///
@@ -200,7 +210,7 @@ impl PathDictionary {
     ///
     /// * `previous_node`: the parent node. A new block is allocated and all its children are
     /// moved to that block. At the end, the `next` value in `previous_node` is updated accordingly.
-    pub fn allocate_new_block(&mut self, previous_node: i32) -> usize {
+    pub fn allocate_new_block(&mut self, previous_node: i32) -> i32 {
         const BLOCK_SIZE: usize = 0x80;
         let mut offset = self.nodes.len();
         // Offset should be the center point wrt XOR with a value in [0, BLOCK_SIZE-1]. In other words,
@@ -257,7 +267,7 @@ impl PathDictionary {
         }
         // At the end, fix back links for source node (see function docs)
         self.nodes[previous_node as usize].attach_next(offset as i32);
-        offset
+        offset as i32
     }
 }
 

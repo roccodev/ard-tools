@@ -1,0 +1,1 @@
+Place `bf3.arh` and `bf3.ard` in this directory.
