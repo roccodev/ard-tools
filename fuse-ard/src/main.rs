@@ -5,6 +5,7 @@ use env_logger::Env;
 use fs::ArhFuseSystem;
 use fuser::MountOption;
 
+mod error;
 mod fs;
 
 fn main() {

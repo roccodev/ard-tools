@@ -16,6 +16,8 @@ use fuser::{
 use libc::{EEXIST, ENOENT, ENOTDIR, ENOTEMPTY, ENOTSUP};
 use log::debug;
 
+use crate::fuse_err;
+
 pub struct ArhFuseSystem {
     fs: ArhFileSystem,
     ard_file: Option<ArdReader<BufReader<File>>>,
@@ -245,12 +247,8 @@ impl Filesystem for ArhFuseSystem {
             return;
         };
         let inode = self.get_inode_and_save(name.clone());
-        match self.fs.create_file(&name) {
-            Ok(meta) => reply.entry(&TTL, &make_file_attr(&meta, inode), 0),
-            e @ Err(_) => {
-                e.unwrap(); // TODO
-            }
-        }
+        let meta = fuse_err!(self.fs.create_file(&name), reply);
+        reply.entry(&TTL, &make_file_attr(&meta, inode), 0);
     }
 
     fn mkdir(
@@ -275,16 +273,10 @@ impl Filesystem for ArhFuseSystem {
         // The ARH format has no concept of directories, we create a hidden file to generate
         // the directory structure. Directories are automatically deleted when they are empty.
         let placeholder = format!("{name}/.fuse_ard_dir");
-        match self.fs.create_file(&placeholder) {
-            Ok(_) => {
-                let inode = self.get_inode_and_save(placeholder);
-                let dir = self.fs.get_dir(&name).unwrap();
-                reply.entry(&TTL, &make_dir_attr(dir, inode), 0);
-            }
-            e @ Err(_) => {
-                e.unwrap();
-            } // TODO
-        }
+        fuse_err!(self.fs.create_file(&placeholder), reply);
+        let inode = self.get_inode_and_save(placeholder);
+        let dir = self.fs.get_dir(&name).unwrap();
+        reply.entry(&TTL, &make_dir_attr(dir, inode), 0);
     }
 
     fn unlink(&mut self, _req: &Request, parent: u64, name: &OsStr, reply: ReplyEmpty) {
@@ -293,12 +285,8 @@ impl Filesystem for ArhFuseSystem {
             reply.error(ENOENT);
             return;
         };
-        match self.fs.delete_file(&name) {
-            Ok(_) => reply.ok(),
-            e @ Err(_) => {
-                e.unwrap();
-            } // TODO (libc convert)
-        }
+        fuse_err!(self.fs.delete_file(&name), reply);
+        reply.ok();
     }
 
     fn rmdir(&mut self, _req: &Request, parent: u64, name: &OsStr, reply: ReplyEmpty) {
@@ -315,12 +303,8 @@ impl Filesystem for ArhFuseSystem {
         // Recursive deletion is handled by the caller.
         // We delete the hidden file we made if we created the directory
         self.fs.delete_file(&format!("{name}/.fuse_ard_dir")).ok();
-        match self.fs.delete_empty_dir(&name) {
-            Ok(_) => reply.ok(),
-            e @ Err(_) => {
-                e.unwrap();
-            } // TODO (libc convert)
-        }
+        fuse_err!(self.fs.delete_empty_dir(&name), reply);
+        reply.ok();
     }
 
     fn rename(
@@ -344,21 +328,13 @@ impl Filesystem for ArhFuseSystem {
             return;
         };
         if self.fs.get_dir(&old_name).is_some() {
-            match self.fs.rename_dir(&old_name, &new_name) {
-                Ok(_) => reply.ok(),
-                e @ Err(_) => {
-                    e.unwrap();
-                } // TODO (libc convert)
-            }
+            fuse_err!(self.fs.rename_dir(&old_name, &new_name), reply);
+            reply.ok();
             return;
         }
         if self.fs.get_file_info(&old_name).is_some() {
-            match self.fs.rename_file(&old_name, &new_name) {
-                Ok(_) => reply.ok(),
-                e @ Err(_) => {
-                    e.unwrap();
-                } // TODO (libc convert)
-            }
+            fuse_err!(self.fs.rename_file(&old_name, &new_name), reply);
+            reply.ok();
             return;
         }
         debug!("[RENAME] no match {old_parent}");
