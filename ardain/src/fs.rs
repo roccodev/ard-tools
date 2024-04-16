@@ -1,9 +1,9 @@
 use std::{
     collections::VecDeque,
-    io::{Read, Seek},
+    io::{Read, Seek, Write},
 };
 
-use binrw::{BinRead, BinResult};
+use binrw::{BinRead, BinResult, BinWrite};
 
 use crate::{
     arh::{Arh, DictNode, FileMeta},
@@ -306,6 +306,12 @@ impl ArhFileSystem {
         }
         self.dir_tree.remove_empty_dir(path);
         Ok(())
+    }
+
+    /// Writes the updated version of the ARH file system to the given writer.
+    pub fn sync(&mut self, mut writer: impl Write + Seek) -> Result<()> {
+        self.arh.prepare_for_write();
+        Ok(self.arh.write(&mut writer)?)
     }
 }
 

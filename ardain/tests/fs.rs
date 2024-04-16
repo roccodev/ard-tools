@@ -1,4 +1,4 @@
-use std::{collections::VecDeque, fs::File};
+use std::{collections::VecDeque, fs::File, io::Cursor};
 
 use ardain::{ArhFileSystem, DirEntry};
 
@@ -25,8 +25,10 @@ fn create_files() {
     ];
     for f in files {
         arh.create_file(f).unwrap();
-        println!("Checking after adding {f}");
-        check_reachable(&arh);
+        check_and_read_back(&mut arh, |arh| {
+            println!("Checking after adding {f}");
+            check_reachable(&arh);
+        });
     }
 }
 
@@ -37,8 +39,10 @@ fn create_error_extended() {
     let files = ["/file.tar", "/file.tar.gz"];
     for f in files {
         arh.create_file(f).unwrap();
-        println!("Checking after adding {f}");
-        check_reachable(&arh);
+        check_and_read_back(&mut arh, |arh| {
+            println!("Checking after adding {f}");
+            check_reachable(&arh);
+        });
     }
 }
 
@@ -47,7 +51,7 @@ fn create_error_extended() {
 fn create_error_into_extended() {
     let mut arh = load_arh();
     arh.create_file("/bdat/fld.bd").unwrap();
-    check_reachable(&arh);
+    check_and_read_back(&mut arh, |arh| check_reachable(&arh));
 }
 
 #[test]
@@ -71,24 +75,30 @@ fn delete_files() {
     ];
     for f in files {
         arh.delete_file(f).unwrap();
-        println!("Checking that {f} is no longer reachable");
-        assert!(!arh.is_file(f));
-        println!("Checking reachable after removing {f}");
-        check_reachable(&arh);
+        check_and_read_back(&mut arh, |arh| {
+            println!("Checking that {f} is no longer reachable");
+            assert!(!arh.is_file(f));
+            println!("Checking reachable after removing {f}");
+            check_reachable(&arh);
+        });
     }
     for f in create_and_delete {
         arh.create_file(f).unwrap();
-        println!("Checking that {f} is now reachable");
-        assert!(arh.is_file(f));
-        println!("Checking reachable after adding {f}");
-        check_reachable(&arh);
+        check_and_read_back(&mut arh, |arh| {
+            println!("Checking that {f} is now reachable");
+            assert!(arh.is_file(f));
+            println!("Checking reachable after adding {f}");
+            check_reachable(&arh);
+        });
     }
     for f in create_and_delete.iter().rev() {
         arh.delete_file(f).unwrap();
-        println!("Checking that {f} is no longer reachable");
-        assert!(!arh.is_file(f));
-        println!("Checking reachable after removing {f}");
-        check_reachable(&arh);
+        check_and_read_back(&mut arh, |arh| {
+            println!("Checking that {f} is no longer reachable");
+            assert!(!arh.is_file(f));
+            println!("Checking reachable after removing {f}");
+            check_reachable(&arh);
+        });
     }
 }
 
@@ -121,13 +131,15 @@ fn rename_files() {
         println!("Checking that {f} was reachable");
         let meta = *arh.get_file_info(f).unwrap();
         arh.rename_file(f, &reverse_path).unwrap();
-        println!("Checking that {f} is no longer reachable");
-        assert!(!arh.is_file(f));
-        println!("Checking that {reverse_path} is now reachable");
-        let new_meta = *arh.get_file_info(reverse_path).unwrap();
-        assert_eq!(meta, new_meta);
-        println!("Checking reachable after renaming {f}");
-        check_reachable(&arh);
+        check_and_read_back(&mut arh, |arh| {
+            println!("Checking that {f} is no longer reachable");
+            assert!(!arh.is_file(f));
+            println!("Checking that {reverse_path} is now reachable");
+            let new_meta = *arh.get_file_info(reverse_path).unwrap();
+            assert_eq!(meta, new_meta);
+            println!("Checking reachable after renaming {f}");
+            check_reachable(&arh);
+        });
     }
 }
 
@@ -148,6 +160,15 @@ fn check_reachable(arh: &ArhFileSystem) {
             }
         }
     }
+}
+
+fn check_and_read_back(arh: &mut ArhFileSystem, check_fn: impl Fn(&mut ArhFileSystem)) {
+    check_fn(arh);
+    let mut out_arh = Cursor::new(Vec::new());
+    arh.sync(&mut out_arh).expect("arh write");
+    out_arh.set_position(0);
+    let mut new_arh = ArhFileSystem::load(out_arh).expect("arh read back");
+    check_fn(&mut new_arh);
 }
 
 fn load_arh() -> ArhFileSystem {

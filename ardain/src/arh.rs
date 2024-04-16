@@ -4,14 +4,11 @@ use std::{
     mem::size_of,
 };
 
-use binrw::{binread, BinRead};
-
-use crate::DirNode;
+use binrw::{BinRead, BinWrite};
 
 const KEY_XOR: u32 = 0xF3F35353;
 
-#[derive(Debug, PartialEq, Clone)]
-#[binread]
+#[derive(Debug, PartialEq, Clone, BinRead, BinWrite)]
 #[brw(little, magic(b"arh1"))]
 pub struct Arh {
     _str_table_len_dup: u32,
@@ -19,13 +16,14 @@ pub struct Arh {
     offsets: ArhOffsets,
     key: u32,
     #[br(args { offsets, key })]
+    #[bw(args { offsets })]
     encrypted: EncryptedSection,
-    #[br(args { len: offsets.file_table_len }, seek_before = SeekFrom::Start(offsets.file_table_offset.into()))]
+    #[br(args { len: offsets.file_table_len })]
+    #[brw(seek_before = SeekFrom::Start(offsets.file_table_offset.into()))]
     pub file_table: FileTable,
 }
 
-#[derive(Debug, PartialEq, Clone, Copy)]
-#[binread]
+#[derive(Debug, PartialEq, Clone, Copy, BinRead, BinWrite)]
 struct ArhOffsets {
     str_table_offset: u32,
     str_table_len: u32,
@@ -35,46 +33,47 @@ struct ArhOffsets {
     file_table_len: u32,
 }
 
-#[derive(Debug, PartialEq, Clone)]
-#[binread]
+#[derive(Debug, PartialEq, Clone, BinRead, BinWrite)]
 #[br(import {
     offsets: ArhOffsets,
     key: u32
 })]
+#[bw(import {
+    offsets: &ArhOffsets,
+})]
 struct EncryptedSection {
-    #[br(args { key, len: offsets.str_table_len }, seek_before = SeekFrom::Start(offsets.str_table_offset.into()))]
+    #[br(args { key, len: offsets.str_table_len })]
+    #[brw(seek_before = SeekFrom::Start(offsets.str_table_offset.into()))]
     string_table: StringTable,
-    #[br(args { key, len: offsets.path_dict_len }, seek_before = SeekFrom::Start(offsets.path_dict_offset.into()))]
+    #[br(args { key, len: offsets.path_dict_len })]
+    #[brw(seek_before = SeekFrom::Start(offsets.path_dict_offset.into()))]
     path_dict: PathDictionary,
 }
 
-#[derive(Debug, PartialEq, Clone)]
-#[binread]
+#[derive(Debug, PartialEq, Clone, BinRead, BinWrite)]
 #[br(import { len: u32, key: u32 })]
 pub struct StringTable {
     #[br(args { count: len.try_into().unwrap() }, map_stream = |reader| EncryptedSection::decrypt(reader, len, key).expect("TODO"))]
     strings: Vec<u8>,
 }
 
-#[derive(Debug, PartialEq, Clone)]
-#[binread]
+#[derive(Debug, PartialEq, Clone, BinRead, BinWrite)]
 #[br(import { len: u32, key: u32 })]
 pub struct PathDictionary {
     #[br(args { count: usize::try_from(len).unwrap() / size_of::<RawDictNode>() }, map_stream = |reader| EncryptedSection::decrypt(reader, len, key).expect("TODO"))]
     pub nodes: Vec<DictNode>,
 }
 
-#[derive(Debug, PartialEq, Clone)]
-#[binread]
+#[derive(Debug, PartialEq, Clone, BinRead, BinWrite)]
 #[br(import { len: u32 })]
 pub struct FileTable {
     #[br(args { count: usize::try_from(len).unwrap() })]
     files: Vec<FileMeta>,
 }
 
-#[derive(Debug, PartialEq, Eq, Clone, Copy)]
-#[binread]
+#[derive(Debug, PartialEq, Eq, Clone, Copy, BinRead, BinWrite)]
 #[br(map = |raw: RawDictNode| raw.into())]
+#[bw(map = |n: &DictNode| RawDictNode::from(*n))]
 pub enum DictNode {
     /// Raw repr: previous < 0 and next < 0
     Free,
@@ -86,15 +85,13 @@ pub enum DictNode {
     Leaf { previous: i32, string_offset: i32 },
 }
 
-#[derive(Debug, PartialEq, Clone, Copy)]
-#[binread]
+#[derive(Debug, PartialEq, Clone, Copy, BinRead, BinWrite)]
 pub struct RawDictNode {
     pub next: i32,
     pub prev: i32,
 }
 
-#[derive(Debug, Default, PartialEq, Clone, Copy)]
-#[binread]
+#[derive(Debug, Default, PartialEq, Clone, Copy, BinRead, BinWrite)]
 pub struct FileMeta {
     pub offset: u64,
     pub compressed_size: u32,
@@ -118,6 +115,40 @@ impl Arh {
 
     pub fn path_dictionary_mut(&mut self) -> &mut PathDictionary {
         &mut self.encrypted.path_dict
+    }
+
+    pub(crate) fn prepare_for_write(&mut self) {
+        // We don't re-encrypt
+        self.key = KEY_XOR;
+
+        self.offsets.file_table_len = self
+            .file_table
+            .files
+            .len()
+            .try_into()
+            .expect("file table len");
+        self.offsets.str_table_len = self
+            .encrypted
+            .string_table
+            .strings
+            .len()
+            .try_into()
+            .expect("string table len");
+        self.offsets.path_dict_len = (self.encrypted.path_dict.nodes.len()
+            * size_of::<RawDictNode>())
+        .try_into()
+        .expect("string table len");
+
+        let mut offset = 0x30;
+        self.offsets.str_table_offset = offset;
+        offset += self.offsets.str_table_len;
+        self.offsets.path_dict_offset = offset;
+        offset += self.offsets.path_dict_len;
+        self.offsets.file_table_offset = offset;
+
+        // Unknown
+        self._path_dict_rel_ptr = self.offsets.path_dict_offset - 0x30;
+        self._str_table_len_dup = self.offsets.str_table_len;
     }
 }
 

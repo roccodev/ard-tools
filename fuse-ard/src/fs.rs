@@ -3,12 +3,12 @@ use std::{
     ffi::OsStr,
     fs::File,
     hash::{Hash, Hasher},
-    io::{BufReader, Read, Seek},
+    io::{BufReader, BufWriter, Read, Seek},
+    path::{Path, PathBuf},
     time::{Duration, UNIX_EPOCH},
 };
 
-use anyhow::Result;
-use ardain::{ArdReader, ArhFileSystem, DirEntry, DirNode, FileMeta};
+use ardain::{error::Result, ArdReader, ArhFileSystem, DirEntry, DirNode, FileMeta};
 use fuser::{
     FileAttr, FileType, Filesystem, ReplyAttr, ReplyData, ReplyDirectory, ReplyEmpty, ReplyEntry,
     Request,
@@ -22,18 +22,24 @@ pub struct ArhFuseSystem {
     fs: ArhFileSystem,
     ard_file: Option<ArdReader<BufReader<File>>>,
     inode_cache: HashMap<u64, (String, u64)>,
+    out_arh: PathBuf,
 }
 
 const TTL: Duration = Duration::from_secs(1);
 const INODE_ROOT: u64 = 1;
 
 impl ArhFuseSystem {
-    pub fn load(arh: impl Read + Seek, ard: Option<File>) -> Result<Self> {
+    pub fn load(
+        arh: impl Read + Seek,
+        ard: Option<File>,
+        out_arh: impl AsRef<Path>,
+    ) -> anyhow::Result<Self> {
         let fs = ArhFileSystem::load(arh)?;
         Ok(Self {
             fs,
             inode_cache: HashMap::default(),
             ard_file: ard.map(|ard| ArdReader::new(BufReader::new(ard))),
+            out_arh: PathBuf::from(out_arh.as_ref()),
         })
     }
 
@@ -51,6 +57,13 @@ impl ArhFuseSystem {
             return Some("/");
         }
         self.inode_cache.get(&inode).map(|s| s.0.as_str())
+    }
+
+    pub(crate) fn sync(&mut self, only_data: bool) -> Result<()> {
+        if !only_data {
+            self.fs.sync(BufWriter::new(File::create(&self.out_arh)?))?;
+        }
+        Ok(())
     }
 
     fn build_path(&self, parent_inode: u64, name: &OsStr) -> Option<String> {
@@ -338,6 +351,28 @@ impl Filesystem for ArhFuseSystem {
             return;
         }
         debug!("[RENAME] no match {old_parent}");
+    }
+
+    fn fsync(&mut self, _req: &Request, _ino: u64, _fh: u64, only_data: bool, reply: ReplyEmpty) {
+        fuse_err!(self.sync(only_data), reply);
+        reply.ok();
+    }
+
+    fn fsyncdir(
+        &mut self,
+        _req: &Request,
+        _ino: u64,
+        _fh: u64,
+        only_data: bool,
+        reply: ReplyEmpty,
+    ) {
+        fuse_err!(self.sync(only_data), reply);
+        reply.ok();
+    }
+
+    fn destroy(&mut self) {
+        self.sync(false)
+            .expect("could not sync file system, data may be lost");
     }
 }
 
