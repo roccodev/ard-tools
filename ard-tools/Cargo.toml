@@ -1,0 +1,9 @@
+[package]
+name = "ard-tools"
+version = "0.1.0"
+edition = "2021"
+
+[dependencies]
+ardain = { path = "../ardain" }
+anyhow = "1"
+clap = { version = "4.5.4", features = ["derive"] }

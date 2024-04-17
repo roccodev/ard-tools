@@ -337,7 +337,7 @@ impl DirNode {
     /// this directory node.
     ///
     /// Paths start with a '/' character.
-    fn children_paths(&self) -> Vec<String> {
+    pub fn children_paths(&self) -> Vec<String> {
         let children = match &self.entry {
             DirEntry::File => return vec![self.name.clone()],
             DirEntry::Directory { children } => children,

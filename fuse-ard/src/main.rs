@@ -12,7 +12,7 @@ fn main() {
     let cmd = Command::new("fuse-ard")
         .arg(arg!([mount_point] "where to mount the archive, e.g. /mnt/ard").required(true))
         .arg(arg!(--arh <FILE> "path to the .arh file").required(true))
-        .arg(arg!(--ard <FILE> "path to the .ard file. If absent, some operations won't be available."))
+        .arg(arg!(--ard <FILE> "path to the .ard file. If absent, some operations won't be available. Note that the .ard file will always be overwritten unless --readonly is present!"))
         .arg(arg!(--arhout <FILE> "path to the .arh file to write modifications to. If absent, the main .arh file will be overwritten!"))
         .arg(arg!(-r --readonly "mount the archive as read-only"))
         .arg(arg!(-d --debug "enable FUSE debugging and debug logs"));
@@ -34,7 +34,7 @@ fn main() {
     let out_arh = matches
         .get_one::<String>("arhout")
         .unwrap_or_else(|| &arh_path);
-    let mut fs = ArhFuseSystem::load(arh, ard, out_arh).unwrap();
+    let fs = ArhFuseSystem::load(arh, ard, out_arh).unwrap();
 
     let mount_point = matches.get_one::<String>("mount_point").unwrap();
     let mut opts = vec![

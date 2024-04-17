@@ -400,6 +400,21 @@ impl DictNode {
     }
 }
 
+impl FileMeta {
+    /// Returns the file's size after being extracted from the archive.
+    ///
+    /// For files that are stored uncompressed, the game expects `uncompressed_size` to be 0,
+    /// which can be confusing. This method always returns a non-zero size. (except for actually
+    /// empty files)
+    pub fn actual_size(&self) -> u32 {
+        if self.uncompressed_size != 0 {
+            self.uncompressed_size
+        } else {
+            self.compressed_size
+        }
+    }
+}
+
 impl From<RawDictNode> for DictNode {
     fn from(value: RawDictNode) -> Self {
         match (value.prev, value.next) {
