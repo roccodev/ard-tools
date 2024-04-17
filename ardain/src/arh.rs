@@ -12,7 +12,6 @@ const KEY_XOR: u32 = 0xF3F35353;
 #[brw(little, magic(b"arh1"))]
 pub struct Arh {
     _str_table_len_dup: u32,
-    _path_dict_rel_ptr: u32,
     offsets: ArhOffsets,
     key: u32,
     #[br(args { offsets, key })]
@@ -25,6 +24,7 @@ pub struct Arh {
 
 #[derive(Debug, PartialEq, Clone, Copy, BinRead, BinWrite)]
 struct ArhOffsets {
+    path_dict_node_count: u32,
     str_table_offset: u32,
     str_table_len: u32,
     path_dict_offset: u32,
@@ -45,7 +45,7 @@ struct EncryptedSection {
     #[br(args { key, len: offsets.str_table_len })]
     #[brw(seek_before = SeekFrom::Start(offsets.str_table_offset.into()))]
     string_table: StringTable,
-    #[br(args { key, len: offsets.path_dict_len })]
+    #[br(args { key, len: offsets.path_dict_len, count: offsets.path_dict_node_count })]
     #[brw(seek_before = SeekFrom::Start(offsets.path_dict_offset.into()))]
     path_dict: PathDictionary,
 }
@@ -58,9 +58,9 @@ pub struct StringTable {
 }
 
 #[derive(Debug, PartialEq, Clone, BinRead, BinWrite)]
-#[br(import { len: u32, key: u32 })]
+#[br(import { count: u32, len: u32, key: u32 })]
 pub struct PathDictionary {
-    #[br(args { count: usize::try_from(len).unwrap() / size_of::<RawDictNode>() }, map_stream = |reader| EncryptedSection::decrypt(reader, len, key).expect("TODO"))]
+    #[br(args { count: usize::try_from(count).unwrap() }, map_stream = |reader| EncryptedSection::decrypt(reader, len, key).expect("TODO"))]
     pub nodes: Vec<DictNode>,
 }
 
@@ -143,11 +143,16 @@ impl Arh {
         self.offsets.str_table_offset = offset;
         offset += self.offsets.str_table_len;
         self.offsets.path_dict_offset = offset;
+        self.offsets.path_dict_node_count = self
+            .path_dictionary()
+            .nodes
+            .len()
+            .try_into()
+            .expect("path dict count");
         offset += self.offsets.path_dict_len;
         self.offsets.file_table_offset = offset;
 
         // Unknown
-        self._path_dict_rel_ptr = self.offsets.path_dict_offset - 0x30;
         self._str_table_len_dup = self.offsets.str_table_len;
     }
 }
