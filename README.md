@@ -3,6 +3,7 @@
 This repository hosts some tools to work with .ard/.arh files from the Switch Xenoblade games.
 
 * [ardain](ardain), a library to inspect the structure of an ARH/ARD file system.
+* [ard-tools](ard-tools), a CLI tool to perform basic queries and modifications on an ARH file system.
 * [fuse-ard](fuse-ard), a [FUSE](https://www.kernel.org/doc/html/latest/filesystems/fuse.html) 
 driver to work with ARD archives as regular mounts, inspired
 by AVFS and the like.

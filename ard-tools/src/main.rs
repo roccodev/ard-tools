@@ -24,10 +24,14 @@ struct Cli {
 
 #[derive(Args)]
 struct InputData {
+    /// Input .arh file, required for most commands
     #[arg(long = "arh", global = true)]
     in_arh: Option<String>,
+    /// Input .ard file (data archive)
     #[arg(long = "ard", global = true)]
     in_ard: Option<String>,
+    /// Output .arh file, for commands that write data and metadata. If absent, the input
+    /// .arh file will be overwritten!
     #[arg(long = "out-arh", global = true)]
     out_arh: Option<String>,
 }
