@@ -11,7 +11,6 @@ pub const BLOCK_SIZE_POW_DEFAULT: u16 = 9; // 512-byte blocks
 #[derive(Debug, Clone, BinRead, BinWrite)]
 #[brw(magic = b"arhx")]
 pub struct ArhExtSection {
-    pub section_size: u32,
     pub allocated_blocks: BlockAllocTable,
     pub file_meta_recycle_bin: FileRecycleBin,
 }
@@ -28,7 +27,7 @@ pub struct ArhExtOffsets {
 /// in the ARD file into blocks of fixed size.
 #[derive(Debug, Clone, BinRead, BinWrite)]
 pub struct BlockAllocTable {
-    /// The size of each block, as a power of 2
+    /// The size of each block, as an exponent base 2
     pub block_size_pow: u16,
     block_arr_count: u64,
     #[br(args { count: block_arr_count.try_into().unwrap() })]
@@ -45,20 +44,18 @@ pub struct FileRecycleBin {
 impl ArhExtSection {
     pub fn new(arh: &Arh, block_size: u16) -> Self {
         Self {
-            section_size: 0,
             allocated_blocks: BlockAllocTable::new(arh, block_size),
             file_meta_recycle_bin: FileRecycleBin::default(),
         }
     }
 
-    pub(crate) fn calc_size(&mut self) {
-        self.section_size = self
-            .allocated_blocks
+    pub(crate) fn calc_size(&mut self) -> u32 {
+        self.allocated_blocks
             .size_on_wire()
             .checked_add(self.file_meta_recycle_bin.size_on_wire())
             .and_then(|sz| sz.checked_add(size_of::<u32>()))
             .and_then(|sz| sz.try_into().ok())
-            .expect("arhext size overflow");
+            .expect("arhext size overflow")
     }
 }
 
@@ -93,10 +90,12 @@ impl BlockAllocTable {
         for block in start..=end {
             let item = (block / 64) as usize;
             let in_item = block % 64;
+            while item >= self.blocks.len() {
+                self.blocks.push(0);
+            }
             if occupied {
                 self.blocks[item] |= 1 << in_item;
             } else {
-                println!("Bit {in_item} ({item})");
                 self.blocks[item] &= !(1 << in_item);
             }
         }

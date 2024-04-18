@@ -2,7 +2,7 @@ use crate::arh_ext;
 
 #[derive(Clone)]
 pub struct ArhOptions {
-    /// The size of a single block (bytes, power of 2) in the block allocation table.
+    /// The size of a single block (bytes, exponent base 2) in the block allocation table.
     ///
     /// Lower values result in higher space efficiency in the ARD file (especially if there
     /// are many small files), but also increase the size of the ARH file.

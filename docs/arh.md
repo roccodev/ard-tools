@@ -20,6 +20,8 @@ This file system is optimized for queries and random file access; it does not ha
 | File metadata table pointer | u32 | absolute |
 | File count | u32 | |
 | Encryption key | u32 | |
+| Ext. magic | 4 bytes | "arhx", **determines whether extended section is present** (see below) |
+| Extended section offset | u32 | absolute, **only if extended section is present** |
 | Padding | | (total header size: 48 bytes)
 
 ### String table
@@ -63,6 +65,39 @@ The first entry in the path dictionary should have `next = 0` and `previous < 0`
 | Uncompressed size | u32 |  |
 | *Unknown* | u32 |  |
 | ID | u32 | |
+
+## Extended section
+
+This isn't part of the official format, rather it is useful to the tools in this repository. It is ignored by the game.
+
+### Section
+
+| Field | Type | Notes |
+| ----- | ---- | ----- |
+| Magic | 4 bytes | "arhx" |
+| Block allocation table | | see below |
+| File recycle bin | | see below |
+
+### Block allocation table
+
+Used to find free space when allocating new files.
+
+A lower block size allows for better packing (higher chances for smaller files to fit), but also increases the length of the block array, and thus the size of the ARH file.
+
+| Field | Type | Notes |
+| ----- | ---- | ----- |
+| Block size | u16 | The size of a single block (bytes, exponent base 2) |
+| Block array length | u64 | |
+| Blocks | u64 * Block array length | Bit array of occupied blocks (1 = occupied, 0 = free) |
+
+### File recycle bin
+
+Deleted files are added to this set, so that their entry slot can be reused when adding new ones.
+
+| Field | Type | Notes |
+| ----- | ---- | ----- |
+| File count | u32 | |
+| File IDs | u32 * File count | in ascending order |
 
 ## Operations
 

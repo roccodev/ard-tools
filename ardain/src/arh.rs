@@ -159,11 +159,11 @@ impl Arh {
         };
 
         if let Some(ext) = self.arh_ext_section.as_mut() {
-            ext.calc_size();
+            let size = ext.calc_size();
             self.arh_ext_offset = Some(ArhExtOffsets {
                 section_offset: offset,
             });
-            add_and_align(&mut offset, 16, ext.section_size);
+            add_and_align(&mut offset, 16, size);
         }
         self.offsets.str_table_offset = offset;
         add_and_align(&mut offset, 32, self.offsets.str_table_len);
