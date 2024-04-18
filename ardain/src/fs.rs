@@ -8,10 +8,12 @@ use binrw::{BinRead, BinResult, BinWrite};
 use crate::{
     arh::{Arh, DictNode, FileMeta},
     error::{Error, Result},
+    opts::ArhOptions,
 };
 
 pub struct ArhFileSystem {
     arh: Arh,
+    opts: ArhOptions,
     // Not part of the ARH format, but we keep one to make enumerating and traversing directories
     // easier.
     dir_tree: DirNode,
@@ -30,10 +32,15 @@ pub enum DirEntry {
 }
 
 impl ArhFileSystem {
-    pub fn load(mut reader: impl Read + Seek) -> BinResult<Self> {
+    pub fn load(reader: impl Read + Seek) -> BinResult<Self> {
+        Self::load_with_options(reader, ArhOptions::default())
+    }
+
+    pub fn load_with_options(mut reader: impl Read + Seek, options: ArhOptions) -> BinResult<Self> {
         let arh = Arh::read(&mut reader)?;
         Ok(Self {
             dir_tree: DirNode::build(&arh),
+            opts: options,
             arh,
         })
     }
@@ -272,7 +279,10 @@ impl ArhFileSystem {
         // the game actually indexes into the file table instead of filtering by that field.
         // Because there is no longer a leaf pointing to that file node, we can zero out its
         // contents, and recycle it later.
-        self.arh.file_table.delete_entry(file_id);
+        let file = self.arh.file_table.delete_entry(file_id).unwrap();
+        let ext = self.arh.get_or_init_ext(&self.opts);
+        ext.allocated_blocks.mark(&file, false);
+        ext.file_meta_recycle_bin.push(file_id);
 
         // Update directory tree
         self.dir_tree.remove_file_entry(path);

@@ -1,4 +1,7 @@
-use std::{fs::File, io::BufReader};
+use std::{
+    fs::File,
+    io::{BufReader, BufWriter},
+};
 
 use anyhow::{anyhow, Result};
 use ardain::ArhFileSystem;
@@ -66,7 +69,7 @@ impl InputData {
 
     pub fn write_fs(&self, fs: &mut ArhFileSystem) -> Result<()> {
         match self.out_arh.as_ref().or(self.in_arh.as_ref()) {
-            Some(path) => Ok(fs.sync(File::create(path)?)?),
+            Some(path) => Ok(fs.sync(BufWriter::new(File::create(path)?))?),
             None => Err(anyhow!("input .arh must be passed in as --arh")),
         }
     }

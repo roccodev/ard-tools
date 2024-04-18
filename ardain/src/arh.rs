@@ -6,20 +6,32 @@ use std::{
 
 use binrw::{BinRead, BinWrite};
 
+use crate::{
+    arh_ext::{ArhExtOffsets, ArhExtSection},
+    opts::ArhOptions,
+};
+
 const KEY_XOR: u32 = 0xF3F35353;
 
-#[derive(Debug, PartialEq, Clone, BinRead, BinWrite)]
+#[derive(Debug, Clone, BinRead, BinWrite)]
 #[brw(little, magic(b"arh1"))]
 pub struct Arh {
     _str_table_len_dup: u32,
     offsets: ArhOffsets,
     key: u32,
+
+    #[br(try)]
+    arh_ext_offset: Option<ArhExtOffsets>,
+
     #[br(args { offsets, key })]
     #[bw(args { offsets })]
     encrypted: EncryptedSection,
     #[br(args { len: offsets.file_table_len })]
     #[brw(seek_before = SeekFrom::Start(offsets.file_table_offset.into()))]
     pub file_table: FileTable,
+
+    #[brw(if (arh_ext_offset.is_some()), seek_before = SeekFrom::Start(arh_ext_offset.unwrap().section_offset.into()))]
+    arh_ext_section: Option<ArhExtSection>,
 }
 
 #[derive(Debug, PartialEq, Clone, Copy, BinRead, BinWrite)]
@@ -140,8 +152,22 @@ impl Arh {
         .expect("string table len");
 
         let mut offset = 0x30;
+
+        let add_and_align = |ofs: &mut u32, n: u32, size: u32| {
+            *ofs += size;
+            *ofs = ofs.next_multiple_of(n);
+        };
+
+        if let Some(ext) = self.arh_ext_section.as_mut() {
+            ext.calc_size();
+            self.arh_ext_offset = Some(ArhExtOffsets {
+                section_offset: offset,
+            });
+            add_and_align(&mut offset, 16, ext.section_size);
+        }
         self.offsets.str_table_offset = offset;
-        offset += self.offsets.str_table_len;
+        add_and_align(&mut offset, 32, self.offsets.str_table_len);
+
         self.offsets.path_dict_offset = offset;
         self.offsets.path_dict_node_count = self
             .path_dictionary()
@@ -149,11 +175,23 @@ impl Arh {
             .len()
             .try_into()
             .expect("path dict count");
-        offset += self.offsets.path_dict_len;
+        add_and_align(&mut offset, 32, self.offsets.path_dict_len);
         self.offsets.file_table_offset = offset;
 
         // Unknown
         self._str_table_len_dup = self.offsets.str_table_len;
+    }
+
+    pub(crate) fn get_or_init_ext<'s>(&'s mut self, opts: &ArhOptions) -> &'s mut ArhExtSection {
+        if self.arh_ext_section.as_ref().is_some_and(|ext| {
+            !opts.ext_force_block_size
+                && ext.allocated_blocks.block_size_pow == opts.ext_block_size_pow
+        }) {
+            return self.arh_ext_section.as_mut().unwrap();
+        }
+        let section = ArhExtSection::new(self, opts.ext_block_size_pow);
+        self.arh_ext_section = Some(section);
+        self.arh_ext_section.as_mut().unwrap()
     }
 }
 
@@ -328,10 +366,14 @@ impl FileTable {
         id
     }
 
-    pub fn delete_entry(&mut self, file_id: u32) {
-        if let Some(file) = self.files.get_mut(file_id as usize) {
-            *file = FileMeta::default();
-        }
+    pub fn delete_entry(&mut self, file_id: u32) -> Option<FileMeta> {
+        self.files
+            .get_mut(file_id as usize)
+            .map(|f| std::mem::take(f))
+    }
+
+    pub fn files(&self) -> &[FileMeta] {
+        &self.files
     }
 }
 
