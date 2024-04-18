@@ -49,6 +49,14 @@ impl ArhExtSection {
         }
     }
 
+    pub fn recycle_bin(&self) -> &FileRecycleBin {
+        &self.file_meta_recycle_bin
+    }
+
+    pub fn recycle_bin_mut(&mut self) -> &mut FileRecycleBin {
+        &mut self.file_meta_recycle_bin
+    }
+
     pub(crate) fn calc_size(&mut self) -> u32 {
         self.allocated_blocks
             .size_on_wire()
@@ -113,6 +121,11 @@ impl FileRecycleBin {
             self.file_ids.insert(i, file_id);
             self.len += 1;
         }
+    }
+
+    pub fn pop(&mut self) -> Option<u32> {
+        self.len = self.len.saturating_sub(1);
+        self.file_ids.pop()
     }
 
     fn size_on_wire(&self) -> usize {

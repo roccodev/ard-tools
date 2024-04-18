@@ -7,6 +7,7 @@ use binrw::{BinRead, BinResult, BinWrite};
 
 use crate::{
     arh::{Arh, DictNode, FileMeta},
+    arh_ext::ArhExtSection,
     error::{Error, Result},
     opts::ArhOptions,
 };
@@ -256,7 +257,15 @@ impl ArhFileSystem {
             _unk: 0,
             id: 0,
         };
-        let id = self.arh.file_table.push_entry(meta);
+        let Arh {
+            file_table,
+            arh_ext_section,
+            ..
+        } = &mut self.arh;
+        let id = file_table.push_entry(
+            meta,
+            arh_ext_section.as_mut().map(ArhExtSection::recycle_bin_mut),
+        );
         let str_offset = self.arh.strings_mut().push(path, id);
         *self.arh.path_dictionary_mut().node_mut(final_node.0) = DictNode::Leaf {
             previous: last_parent as i32,

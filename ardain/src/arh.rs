@@ -7,7 +7,7 @@ use std::{
 use binrw::{BinRead, BinWrite};
 
 use crate::{
-    arh_ext::{ArhExtOffsets, ArhExtSection},
+    arh_ext::{ArhExtOffsets, ArhExtSection, FileRecycleBin},
     opts::ArhOptions,
 };
 
@@ -31,7 +31,7 @@ pub struct Arh {
     pub file_table: FileTable,
 
     #[brw(if (arh_ext_offset.is_some()), seek_before = SeekFrom::Start(arh_ext_offset.unwrap().section_offset.into()))]
-    arh_ext_section: Option<ArhExtSection>,
+    pub(crate) arh_ext_section: Option<ArhExtSection>,
 }
 
 #[derive(Debug, PartialEq, Clone, Copy, BinRead, BinWrite)]
@@ -182,7 +182,7 @@ impl Arh {
         self._str_table_len_dup = self.offsets.str_table_len;
     }
 
-    pub(crate) fn get_or_init_ext<'s>(&'s mut self, opts: &ArhOptions) -> &'s mut ArhExtSection {
+    pub(crate) fn get_or_init_ext(&mut self, opts: &ArhOptions) -> &mut ArhExtSection {
         if self.arh_ext_section.as_ref().is_some_and(|ext| {
             !opts.ext_force_block_size
                 && ext.allocated_blocks.block_size_pow == opts.ext_block_size_pow
@@ -358,8 +358,16 @@ impl FileTable {
             .and_then(|id| self.files.get_mut(id))
     }
 
-    pub fn push_entry(&mut self, mut meta: FileMeta) -> u32 {
-        // TODO recycle deleted slots
+    pub fn push_entry(
+        &mut self,
+        mut meta: FileMeta,
+        recycle_bin: Option<&mut FileRecycleBin>,
+    ) -> u32 {
+        if let Some(id) = recycle_bin.and_then(FileRecycleBin::pop) {
+            // Attempt to recycle deleted entries
+            self.files[id as usize] = meta;
+            return id;
+        }
         let id = self.files.len().try_into().expect("dir tree limit");
         meta.id = id;
         self.files.push(meta);
