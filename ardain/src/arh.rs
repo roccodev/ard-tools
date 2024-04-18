@@ -108,8 +108,19 @@ pub struct FileMeta {
     pub offset: u64,
     pub compressed_size: u32,
     pub uncompressed_size: u32,
-    pub _unk: u32,
+    flags: u32,
     pub id: u32,
+}
+
+#[derive(Debug, PartialEq, Clone, Copy)]
+pub enum FileFlag {
+    /// The game treats these files as absent
+    Hidden = 0,
+    /// Whether the file data follows the XBC1 structure
+    ///
+    /// The game only checks this for uncompressed files. (By default, uncompressed files
+    /// have no XBC1 header.)
+    HasXbc1Header = 1,
 }
 
 impl Arh {
@@ -456,6 +467,16 @@ impl DictNode {
 }
 
 impl FileMeta {
+    pub(crate) fn new_invalid() -> Self {
+        Self {
+            offset: 0,
+            compressed_size: 0,
+            uncompressed_size: 0,
+            flags: 0,
+            id: 0,
+        }
+    }
+
     /// Returns the file's size after being extracted from the archive.
     ///
     /// For files that are stored uncompressed, the game expects `uncompressed_size` to be 0,
@@ -466,6 +487,18 @@ impl FileMeta {
             self.uncompressed_size
         } else {
             self.compressed_size
+        }
+    }
+
+    pub fn is_flag(&self, flag: FileFlag) -> bool {
+        self.flags & (1 << flag as u32) != 0
+    }
+
+    pub fn set_flag(&mut self, flag: FileFlag, value: bool) {
+        if value {
+            self.flags |= 1 << flag as u32;
+        } else {
+            self.flags &= !(1 << flag as u32);
         }
     }
 }

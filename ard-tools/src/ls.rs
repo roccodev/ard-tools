@@ -1,7 +1,7 @@
 use std::borrow::Cow;
 
 use anyhow::{anyhow, Result};
-use ardain::{path::ArhPath, DirEntry};
+use ardain::{path::ArhPath, DirEntry, FileFlag, FileMeta};
 use clap::Args;
 
 use crate::InputData;
@@ -41,26 +41,25 @@ pub fn run(input: &InputData, args: ListArgs) -> Result<()> {
     let mut table = Table::default();
 
     if !args.raw {
-        table.push_row(vec!["Name", "Type", "Size"]);
-        table.push_row(vec!["----", "----", "----"]);
+        table.push_row(vec!["Name", "Type", "Flags", "Size"]);
+        table.push_row(vec!["----", "----", "-----", "----"]);
     }
 
     for child in children {
         match child.entry {
             DirEntry::File => {
-                let file_size = fs
-                    .get_file_info(&format!("{wd}/{}", child.name))
-                    .unwrap()
-                    .actual_size();
-                table.push_row(vec![
-                    child.name.to_string(),
-                    "File".to_string(),
-                    format!("{file_size}"),
+                let file = fs.get_file_info(&format!("{wd}/{}", child.name)).unwrap();
+                let file_size = file.actual_size();
+                table.push_row::<Cow<_>>(vec![
+                    child.name.as_str().into(),
+                    "File".into(),
+                    get_flags_display(file).into(),
+                    format!("{file_size}").into(),
                 ]);
                 files += 1;
             }
             DirEntry::Directory { .. } => {
-                table.push_row(vec![&child.name, "Directory", "--"]);
+                table.push_row(vec![&child.name, "Directory", "", "--"]);
                 dirs += 1;
             }
         }
@@ -73,6 +72,17 @@ pub fn run(input: &InputData, args: ListArgs) -> Result<()> {
     }
 
     Ok(())
+}
+
+fn get_flags_display(meta: &FileMeta) -> String {
+    let mut res = String::new();
+    if meta.is_flag(FileFlag::Hidden) {
+        res.push('H');
+    }
+    if meta.is_flag(FileFlag::HasXbc1Header) {
+        res.push('X');
+    }
+    res
 }
 
 impl<'a> Table<'a> {

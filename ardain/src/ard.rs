@@ -1,4 +1,4 @@
-use std::io::{Read, Seek, SeekFrom};
+use std::io::{Read, Seek, SeekFrom, Write};
 
 use xc3_lib::xbc1::Xbc1;
 
@@ -8,6 +8,19 @@ use crate::FileMeta;
 /// Provides easy access to entries in an ARD file.
 pub struct ArdReader<R> {
     reader: R,
+}
+
+pub struct ArdWriter<W> {
+    writer: W,
+}
+
+pub enum CompressionStrategy {
+    /// Never compress entries.
+    None,
+    /// Use the default compression algorithm the game supports.
+    Standard,
+    /// Compress using all available methods, then pick the smallest result.
+    Best,
 }
 
 pub struct EntryReader<R> {
@@ -38,6 +51,18 @@ impl<R: Read + Seek> ArdReader<R> {
             compressed: file.uncompressed_size != 0,
             entry_size: file.compressed_size.into(),
         }
+    }
+}
+
+impl<W: Write + Seek> ArdWriter<W> {
+    pub fn new(writer: W) -> Self {
+        Self { writer }
+    }
+
+    pub fn write_entry(&mut self, offset: u64, data: &[u8]) -> Result<()> {
+        self.writer.seek(SeekFrom::Start(offset))?;
+        self.writer.write_all(data)?;
+        Ok(())
     }
 }
 

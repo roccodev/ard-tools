@@ -250,20 +250,13 @@ impl ArhFileSystem {
 
         // `final_node` is now a free node.
 
-        let meta = FileMeta {
-            offset: 0,
-            compressed_size: 0,
-            uncompressed_size: 0,
-            _unk: 0,
-            id: 0,
-        };
         let Arh {
             file_table,
             arh_ext_section,
             ..
         } = &mut self.arh;
         let id = file_table.push_entry(
-            meta,
+            FileMeta::new_invalid(),
             arh_ext_section.as_mut().map(ArhExtSection::recycle_bin_mut),
         );
         let str_offset = self.arh.strings_mut().push(path, id);

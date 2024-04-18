@@ -7,5 +7,5 @@ mod opts;
 pub mod path;
 
 pub use ard::ArdReader;
-pub use arh::FileMeta;
+pub use arh::{FileFlag, FileMeta};
 pub use fs::*;
