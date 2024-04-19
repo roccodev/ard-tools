@@ -477,6 +477,17 @@ impl FileMeta {
         }
     }
 
+    #[cfg(test)]
+    pub fn new_for_test(offset: u64, size: u32) -> Self {
+        Self {
+            offset,
+            compressed_size: size,
+            uncompressed_size: 0,
+            flags: 0,
+            id: 0,
+        }
+    }
+
     /// Returns the file's size after being extracted from the archive.
     ///
     /// For files that are stored uncompressed, the game expects `uncompressed_size` to be 0,
