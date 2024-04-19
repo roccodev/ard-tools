@@ -45,3 +45,13 @@ impl LibcError for Error {
         }
     }
 }
+
+impl LibcError for anyhow::Error {
+    fn errno(&self) -> c_int {
+        EIO
+    }
+
+    fn handle(&self) {
+        panic!("{}", self)
+    }
+}

@@ -1,5 +1,10 @@
-use std::fs::File;
+use std::{
+    fs::{File, OpenOptions},
+    io::{BufReader, BufWriter},
+};
 
+use anyhow::Result;
+use ardain::{ArdReader, ArdWriter};
 use clap::{arg, Command};
 use env_logger::Env;
 use fs::ArhFuseSystem;
@@ -7,6 +12,12 @@ use fuser::MountOption;
 
 mod error;
 mod fs;
+mod write;
+
+pub struct StandardArdFile {
+    pub reader: ArdReader<BufReader<File>>,
+    pub writer: ArdWriter<BufWriter<File>>,
+}
 
 fn main() {
     let cmd = Command::new("fuse-ard")
@@ -30,7 +41,7 @@ fn main() {
     let arh = File::open(&arh_path).unwrap();
     let ard = matches
         .get_one::<String>("ard")
-        .map(|path| File::open(path).unwrap());
+        .map(|path| StandardArdFile::new(path).unwrap());
     let out_arh = matches
         .get_one::<String>("arhout")
         .unwrap_or_else(|| &arh_path);
@@ -49,4 +60,15 @@ fn main() {
         opts.push(MountOption::RO);
     }
     fuser::mount2(fs, mount_point, &opts).unwrap();
+}
+
+impl StandardArdFile {
+    pub fn new(path: &str) -> Result<Self> {
+        let file = OpenOptions::new().read(true).write(true).open(path)?;
+        let for_write = file.try_clone()?;
+        Ok(Self {
+            reader: ArdReader::new(BufReader::new(file)),
+            writer: ArdWriter::new(BufWriter::new(for_write)),
+        })
+    }
 }

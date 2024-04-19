@@ -91,6 +91,9 @@ impl BlockAllocTable {
     /// Treats the area occupied by `old_file` as empty, and returns the starting offset for an
     /// area with at least `desired_size` free bytes.
     pub fn find_space_replace(&self, old_file: &FileMeta, desired_size: u64) -> u64 {
+        if old_file.compressed_size == 0 {
+            return self.find_free_space(desired_size);
+        }
         if desired_size <= old_file.compressed_size.into() {
             // Nothing to do, can reuse old space
             return old_file.offset;
@@ -108,9 +111,9 @@ impl BlockAllocTable {
                 return 0;
             }
             if file_start_block >= first_block && file_start_block <= last_block {
-                // [-----FFFFF]
+                // [.....FFFFF] 0-9
                 // First       Last
-                return slot & !((1 << (last_block + 1 - file_start_block)) - 1);
+                return slot & !((1 << (file_start_block - first_block)) - 1);
             }
             if file_end_block >= first_block && file_end_block <= last_block {
                 // [FFFF------]
@@ -138,6 +141,7 @@ impl BlockAllocTable {
         let mut start_block = 0;
         for (i, slot) in self.blocks.iter().copied().enumerate() {
             let slot = patch_fn(i, slot);
+            let first_block = u64::try_from(i).unwrap() * BITS;
             let mut trailing = 0;
             // All occupied
             if slot != u64::MAX {
@@ -161,7 +165,8 @@ impl BlockAllocTable {
                     let mut mask = (1 << desired_blocks) - 1;
                     while mask & (1 << 63) == 0 {
                         if n_slot & mask == mask {
-                            return u64::from(mask.leading_zeros()) * (1 << self.block_size_pow);
+                            return (first_block + u64::from(mask.leading_zeros()))
+                                * (1 << self.block_size_pow);
                         }
                         mask <<= 1;
                     }
@@ -169,7 +174,7 @@ impl BlockAllocTable {
             }
             // Carry over trailing free blocks for case 1
             carry = trailing;
-            start_block = (u64::try_from(i).unwrap() + 1) * BITS - carry;
+            start_block = first_block + BITS - carry;
         }
         // No free space
         let last = self.blocks.last().copied().unwrap_or_default();
@@ -181,7 +186,7 @@ impl BlockAllocTable {
     pub fn mark(&mut self, file: &FileMeta, occupied: bool) {
         let (file_start, file_end) = (file.offset, file.offset + u64::from(file.compressed_size));
         let mut start = file_start >> self.block_size_pow;
-        let mut end = file_end >> self.block_size_pow;
+        let mut end = file_end.div_ceil(1 << self.block_size_pow);
         if !occupied {
             // We write files with sizes that are a multiple of the block size. If we are freeing
             // a file that only covers the start (or end) block partially, we must not mark the block
@@ -199,10 +204,11 @@ impl BlockAllocTable {
             while item >= self.blocks.len() {
                 self.blocks.push(0);
             }
+
             if occupied {
-                self.blocks[item] |= 1 << in_item;
+                self.blocks[item] |= 1 << (63 - in_item);
             } else {
-                self.blocks[item] &= !(1 << in_item);
+                self.blocks[item] &= !(1 << (63 - in_item));
             }
         }
         self.block_arr_count = self.blocks.len().try_into().unwrap();

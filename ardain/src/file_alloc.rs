@@ -54,8 +54,6 @@ impl<'a, 'w, W: Write + Seek> ArdFileAllocator<'a, 'w, W> {
     /// The allocator compresses the data in accordance with the
     /// compression strategy. It then tries to find free space in the archive,
     /// and writes the data to the file.
-    ///
-    /// On success, `file` is updated to point to the new location and size.
     pub fn write_new_file(
         &mut self,
         file_id: u32,
@@ -70,16 +68,14 @@ impl<'a, 'w, W: Write + Seek> ArdFileAllocator<'a, 'w, W> {
         let total_len: u64 = data.size_on_disk().try_into().unwrap();
         let offset = self.block_table.find_free_space(total_len);
         data.write(self.writer.entry(offset)?)?;
-        Self::update_meta(&data, file, offset);
+        Self::update_meta(&mut self.block_table, &data, file, offset);
         Ok(())
     }
 
-    /// Writes the file, replacing the entry pointed to by `file`.
+    /// Writes the file, replacing the entry pointed identified by `file_id`.
     ///
-    /// This works like [`write_new_file`], except it treats `file` as
+    /// This works like [`Self::write_new_file`], except it treats the file as
     /// empty, and frees the space occupied by the old file.
-    ///
-    /// On success, `file` is updated to point to the new location and size.
     pub fn replace_file(
         &mut self,
         file_id: u32,
@@ -94,13 +90,17 @@ impl<'a, 'w, W: Write + Seek> ArdFileAllocator<'a, 'w, W> {
         if data.size_on_disk() <= file.compressed_size.try_into().unwrap() {
             // If it fits, just write and update size
             data.write(self.writer.entry(file.offset)?)?;
-            Self::update_meta(&data, file, file.offset);
+            Self::update_meta(&mut self.block_table, &data, file, file.offset);
             return Ok(());
         }
         let total_len: u64 = data.size_on_disk().try_into().unwrap();
         let offset = self.block_table.find_space_replace(&file, total_len);
         data.write(self.writer.entry(offset)?)?;
-        Self::update_meta(&data, file, offset);
+        // First, mark the old file as unoccupied
+        self.block_table.mark(&file, false);
+        // After updating the file entry, this will mark the new one as occupied
+        // (no problem if they overlap)
+        Self::update_meta(&mut self.block_table, &data, file, offset);
         Ok(())
     }
 
@@ -109,7 +109,12 @@ impl<'a, 'w, W: Write + Seek> ArdFileAllocator<'a, 'w, W> {
         EntryFile::Raw(data)
     }
 
-    fn update_meta(data: &EntryFile, meta: &mut FileMeta, offset: u64) {
+    fn update_meta(
+        alloc_table: &mut BlockAllocTable,
+        data: &EntryFile,
+        meta: &mut FileMeta,
+        offset: u64,
+    ) {
         meta.offset = offset;
         let (has_xbc1, unc_size) = match data {
             EntryFile::Raw(_) => (false, 0),
@@ -119,6 +124,7 @@ impl<'a, 'w, W: Write + Seek> ArdFileAllocator<'a, 'w, W> {
         meta.set_flag(FileFlag::HasXbc1Header, has_xbc1);
         meta.uncompressed_size = unc_size;
         meta.compressed_size = data.size_on_disk().try_into().unwrap();
+        alloc_table.mark(&meta, true);
     }
 }
 

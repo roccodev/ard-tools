@@ -54,6 +54,14 @@ impl<W: Write + Seek> ArdWriter<W> {
         self.writer.seek(SeekFrom::Start(offset))?;
         Ok(&mut self.writer)
     }
+
+    pub fn get_mut(&mut self) -> &mut W {
+        &mut self.writer
+    }
+
+    pub fn into_inner(self) -> W {
+        self.writer
+    }
 }
 
 impl<R: Read + Seek> EntryReader<R> {

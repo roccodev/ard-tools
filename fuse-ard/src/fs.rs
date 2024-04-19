@@ -11,18 +11,19 @@ use std::{
 use ardain::{error::Result, ArdReader, ArhFileSystem, DirEntry, DirNode, FileMeta};
 use fuser::{
     FileAttr, FileType, Filesystem, ReplyAttr, ReplyData, ReplyDirectory, ReplyEmpty, ReplyEntry,
-    Request,
+    ReplyOpen, ReplyWrite, Request,
 };
-use libc::{EEXIST, ENOENT, ENOTDIR, ENOTEMPTY, ENOTSUP};
+use libc::{EBADFD, EEXIST, ENOENT, ENOTDIR, ENOTEMPTY, ENOTSUP, O_RDWR, O_WRONLY};
 use log::debug;
 
-use crate::fuse_err;
+use crate::{fuse_err, write::FileBuffers, StandardArdFile};
 
 pub struct ArhFuseSystem {
-    fs: ArhFileSystem,
-    ard_file: Option<ArdReader<BufReader<File>>>,
+    pub arh: ArhFileSystem,
+    pub ard: Option<StandardArdFile>,
     inode_cache: HashMap<u64, (String, u64)>,
     out_arh: PathBuf,
+    write_buffers: FileBuffers,
 }
 
 const TTL: Duration = Duration::from_secs(1);
@@ -31,15 +32,16 @@ const INODE_ROOT: u64 = 1;
 impl ArhFuseSystem {
     pub fn load(
         arh: impl Read + Seek,
-        ard: Option<File>,
+        ard: Option<StandardArdFile>,
         out_arh: impl AsRef<Path>,
     ) -> anyhow::Result<Self> {
         let fs = ArhFileSystem::load(arh)?;
         Ok(Self {
-            fs,
+            arh: fs,
             inode_cache: HashMap::default(),
-            ard_file: ard.map(|ard| ArdReader::new(BufReader::new(ard))),
+            ard,
             out_arh: PathBuf::from(out_arh.as_ref()),
+            write_buffers: FileBuffers::default(),
         })
     }
 
@@ -61,7 +63,8 @@ impl ArhFuseSystem {
 
     pub(crate) fn sync(&mut self, only_data: bool) -> Result<()> {
         if !only_data {
-            self.fs.sync(BufWriter::new(File::create(&self.out_arh)?))?;
+            self.arh
+                .sync(BufWriter::new(File::create(&self.out_arh)?))?;
         }
         Ok(())
     }
@@ -80,7 +83,7 @@ impl ArhFuseSystem {
     }
 
     fn is_fuse_dir_empty(&self, path: &str) -> bool {
-        let Some(dir) = self.fs.get_dir(path) else {
+        let Some(dir) = self.arh.get_dir(path) else {
             return true;
         };
         let DirEntry::Directory { children } = &dir.entry else {
@@ -113,12 +116,12 @@ impl Filesystem for ArhFuseSystem {
             return;
         };
         let ino = self.get_inode_and_save(name.clone()); // TODO this creates inodes for invalid files too
-        if let Some(dir) = self.fs.get_dir(&name) {
+        if let Some(dir) = self.arh.get_dir(&name) {
             debug!("[LOOKUP:{name}] found directory with inode {ino}");
             reply.entry(&TTL, &make_dir_attr(dir, ino), 0);
             return;
         }
-        if let Some(file) = self.fs.get_file_info(&name) {
+        if let Some(file) = self.arh.get_file_info(&name) {
             debug!("[LOOKUP:{name}] found file with inode {ino}");
             reply.entry(&TTL, &make_file_attr(file, ino), 0);
             return;
@@ -133,11 +136,11 @@ impl Filesystem for ArhFuseSystem {
             reply.error(ENOENT);
             return;
         };
-        if let Some(dir) = self.fs.get_dir(&name) {
+        if let Some(dir) = self.arh.get_dir(&name) {
             reply.attr(&TTL, &make_dir_attr(dir, ino));
             return;
         }
-        if let Some(file) = self.fs.get_file_info(&name) {
+        if let Some(file) = self.arh.get_file_info(&name) {
             reply.attr(&TTL, &make_file_attr(file, ino));
             return;
         }
@@ -153,7 +156,7 @@ impl Filesystem for ArhFuseSystem {
         offset: i64,
         mut reply: ReplyDirectory,
     ) {
-        let Some(dir) = self.get_path(ino).and_then(|path| self.fs.get_dir(path)) else {
+        let Some(dir) = self.get_path(ino).and_then(|path| self.arh.get_dir(path)) else {
             debug!("[READDIR:{ino}] inode unknown");
             reply.error(ENOENT);
             return;
@@ -211,18 +214,19 @@ impl Filesystem for ArhFuseSystem {
     ) {
         let Some(file) = self
             .get_path(ino)
-            .and_then(|path| self.fs.get_file_info(path))
+            .and_then(|path| self.arh.get_file_info(path))
         else {
             debug!("[READ:{ino}] inode unknown");
             reply.error(ENOENT);
             return;
         };
         assert!(offset >= 0);
-        let Some(ard) = self.ard_file.as_mut() else {
+        let Some(ard) = self.ard.as_mut() else {
             reply.error(ENOTSUP);
             return;
         };
         let data = ard
+            .reader
             .entry(file)
             .skip_take(offset as u64, size.into())
             .read()
@@ -260,7 +264,7 @@ impl Filesystem for ArhFuseSystem {
             return;
         };
         let inode = self.get_inode_and_save(name.clone());
-        let meta = fuse_err!(self.fs.create_file(&name), reply);
+        let meta = fuse_err!(self.arh.create_file(&name), reply);
         reply.entry(&TTL, &make_file_attr(&meta, inode), 0);
     }
 
@@ -278,7 +282,7 @@ impl Filesystem for ArhFuseSystem {
             reply.error(ENOENT);
             return;
         };
-        if self.fs.exists(&name) {
+        if self.arh.exists(&name) {
             debug!("[MKDIR] entry already exists {name}");
             reply.error(EEXIST);
             return;
@@ -286,9 +290,9 @@ impl Filesystem for ArhFuseSystem {
         // The ARH format has no concept of directories, we create a hidden file to generate
         // the directory structure. Directories are automatically deleted when they are empty.
         let placeholder = format!("{name}/.fuse_ard_dir");
-        fuse_err!(self.fs.create_file(&placeholder), reply);
+        fuse_err!(self.arh.create_file(&placeholder), reply);
         let inode = self.get_inode_and_save(placeholder);
-        let dir = self.fs.get_dir(&name).unwrap();
+        let dir = self.arh.get_dir(&name).unwrap();
         reply.entry(&TTL, &make_dir_attr(dir, inode), 0);
     }
 
@@ -298,7 +302,7 @@ impl Filesystem for ArhFuseSystem {
             reply.error(ENOENT);
             return;
         };
-        fuse_err!(self.fs.delete_file(&name), reply);
+        fuse_err!(self.arh.delete_file(&name), reply);
         reply.ok();
     }
 
@@ -315,8 +319,8 @@ impl Filesystem for ArhFuseSystem {
         }
         // Recursive deletion is handled by the caller.
         // We delete the hidden file we made if we created the directory
-        self.fs.delete_file(&format!("{name}/.fuse_ard_dir")).ok();
-        fuse_err!(self.fs.delete_empty_dir(&name), reply);
+        self.arh.delete_file(&format!("{name}/.fuse_ard_dir")).ok();
+        fuse_err!(self.arh.delete_empty_dir(&name), reply);
         reply.ok();
     }
 
@@ -340,17 +344,70 @@ impl Filesystem for ArhFuseSystem {
             reply.error(ENOENT);
             return;
         };
-        if self.fs.get_dir(&old_name).is_some() {
-            fuse_err!(self.fs.rename_dir(&old_name, &new_name), reply);
+        if self.arh.get_dir(&old_name).is_some() {
+            fuse_err!(self.arh.rename_dir(&old_name, &new_name), reply);
             reply.ok();
             return;
         }
-        if self.fs.get_file_info(&old_name).is_some() {
-            fuse_err!(self.fs.rename_file(&old_name, &new_name), reply);
+        if self.arh.get_file_info(&old_name).is_some() {
+            fuse_err!(self.arh.rename_file(&old_name, &new_name), reply);
             reply.ok();
             return;
         }
         debug!("[RENAME] no match {old_parent}");
+    }
+
+    fn open(&mut self, _req: &Request, ino: u64, flags: i32, reply: ReplyOpen) {
+        if flags & O_RDWR != 0 || flags & O_WRONLY != 0 {
+            // We only care about writable fds
+            let Some(path) = self
+                .get_path(ino)
+                .and_then(|path| self.arh.get_file_info(path).map(|_| path))
+            else {
+                debug!("[OPEN.W:{ino}] inode unknown");
+                reply.error(ENOENT);
+                return;
+            };
+            let fd = self.write_buffers.open(path.to_string());
+            reply.opened(fd, 0);
+            return;
+        }
+        reply.opened(ino, 0)
+    }
+
+    fn write(
+        &mut self,
+        _req: &Request,
+        ino: u64,
+        fh: u64,
+        offset: i64,
+        data: &[u8],
+        _write_flags: u32,
+        _flags: i32,
+        _lock_owner: Option<u64>,
+        reply: ReplyWrite,
+    ) {
+        let Some(buf) = self.write_buffers.get_handle(fh) else {
+            debug!("[WRITE:{ino},{fh}] bad descriptor");
+            reply.error(EBADFD);
+            return;
+        };
+        buf.write(offset, data);
+        reply.written(data.len().try_into().unwrap());
+    }
+
+    fn flush(&mut self, _req: &Request, _ino: u64, fh: u64, _owner: u64, reply: ReplyEmpty) {
+        let Some(buf) = self.write_buffers.get_handle(fh) else {
+            // Silently ignore (we only care about writable FDs getting close()d)
+            reply.ok();
+            return;
+        };
+        let Some(ard) = self.ard.as_mut() else {
+            reply.error(ENOTSUP);
+            return;
+        };
+        fuse_err!(buf.flush(&mut self.arh, ard), reply);
+        reply.ok();
     }
 
     fn fsync(&mut self, _req: &Request, _ino: u64, _fh: u64, only_data: bool, reply: ReplyEmpty) {
@@ -370,7 +427,26 @@ impl Filesystem for ArhFuseSystem {
         reply.ok();
     }
 
+    fn release(
+        &mut self,
+        _req: &Request,
+        _ino: u64,
+        fh: u64,
+        _flags: i32,
+        _lock_owner: Option<u64>,
+        _flush: bool,
+        reply: ReplyEmpty,
+    ) {
+        self.write_buffers.release(fh);
+        reply.ok();
+    }
+
     fn destroy(&mut self) {
+        if let Some(ard) = self.ard.as_mut() {
+            self.write_buffers
+                .flush_all(&mut self.arh, ard)
+                .expect("could not sync write buffers, data may be lost");
+        }
         self.sync(false)
             .expect("could not sync file system, data may be lost");
     }
