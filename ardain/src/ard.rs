@@ -14,15 +14,6 @@ pub struct ArdWriter<W> {
     writer: W,
 }
 
-pub enum CompressionStrategy {
-    /// Never compress entries.
-    None,
-    /// Use the default compression algorithm the game supports.
-    Standard,
-    /// Compress using all available methods, then pick the smallest result.
-    Best,
-}
-
 pub struct EntryReader<R> {
     reader: R,
     offset: u64,
@@ -59,10 +50,9 @@ impl<W: Write + Seek> ArdWriter<W> {
         Self { writer }
     }
 
-    pub fn write_entry(&mut self, offset: u64, data: &[u8]) -> Result<()> {
+    pub fn entry(&mut self, offset: u64) -> Result<impl Write + Seek + '_> {
         self.writer.seek(SeekFrom::Start(offset))?;
-        self.writer.write_all(data)?;
-        Ok(())
+        Ok(&mut self.writer)
     }
 }
 

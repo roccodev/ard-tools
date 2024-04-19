@@ -281,7 +281,6 @@ mod tests {
 
     #[test]
     fn block_table_find_replace() {
-        // Case 1: leading free blocks
         let file = FileMeta::new_for_test(60 * BLOCK_SIZE, 68 * BLOCK_SIZE as u32);
         let table = BlockAllocTable {
             block_size_pow: BLOCK_POW,

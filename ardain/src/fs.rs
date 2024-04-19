@@ -7,14 +7,14 @@ use binrw::{BinRead, BinResult, BinWrite};
 
 use crate::{
     arh::{Arh, DictNode, FileMeta},
-    arh_ext::ArhExtSection,
+    arh_ext::{ArhExtSection, BlockAllocTable},
     error::{Error, Result},
     opts::ArhOptions,
 };
 
 pub struct ArhFileSystem {
-    arh: Arh,
-    opts: ArhOptions,
+    pub(crate) arh: Arh,
+    pub(crate) opts: ArhOptions,
     // Not part of the ARH format, but we keep one to make enumerating and traversing directories
     // easier.
     dir_tree: DirNode,
