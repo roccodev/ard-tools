@@ -8,6 +8,7 @@ use crate::InputData;
 
 #[derive(Args)]
 pub struct ListArgs {
+    #[arg(value_parser = crate::parse_path)]
     working_directory: Option<ArhPath>,
     /// Only print file and directory names
     #[arg(short, long)]
@@ -41,8 +42,8 @@ pub fn run(input: &InputData, args: ListArgs) -> Result<()> {
     let mut table = Table::default();
 
     if !args.raw {
-        table.push_row(vec!["Name", "Type", "Flags", "Size"]);
-        table.push_row(vec!["----", "----", "-----", "----"]);
+        table.push_row(vec!["Name", "Type", "Flags", "Size", "ARD Offset"]);
+        table.push_row(vec!["----", "----", "-----", "----", "----------"]);
     }
 
     for child in children {
@@ -55,6 +56,7 @@ pub fn run(input: &InputData, args: ListArgs) -> Result<()> {
                     "File".into(),
                     get_flags_display(file).into(),
                     format!("{file_size}").into(),
+                    format!("{:X}", file.offset).into(),
                 ]);
                 files += 1;
             }

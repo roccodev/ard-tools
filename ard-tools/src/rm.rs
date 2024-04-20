@@ -7,6 +7,7 @@ use crate::InputData;
 #[derive(Args)]
 pub struct RemoveArgs {
     /// The file or directory to remove
+    #[arg(value_parser = crate::parse_path)]
     path: ArhPath,
     /// Remove all contents of each directory, including subdirectories. (Required to remove
     /// non-empty directories)
@@ -41,11 +42,11 @@ pub fn run(input: &InputData, args: RemoveArgs) -> Result<()> {
         if args.recursive || args.soft {
             for path in dir.children_paths() {
                 if args.soft {
-                    fs.get_file_info_mut(&format!("{}{path}", args.path))
+                    fs.get_file_info_mut(&args.path.join(&path))
                         .unwrap()
                         .set_flag(FileFlag::Hidden, true);
                 } else {
-                    fs.delete_file(&format!("{}{path}", args.path))?;
+                    fs.delete_file(&args.path.join(&path))?;
                 }
             }
         }

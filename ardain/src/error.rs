@@ -2,10 +2,14 @@ use std::{io, num::TryFromIntError};
 
 use xc3_lib::error::DecompressStreamError;
 
+use crate::path::InvalidPathError;
+
 pub type Result<T> = std::result::Result<T, Error>;
 
 #[derive(Debug, thiserror::Error)]
 pub enum Error {
+    #[error(transparent)]
+    Path(#[from] InvalidPathError),
     #[error(transparent)]
     Parse(#[from] binrw::Error),
     #[error(transparent)]

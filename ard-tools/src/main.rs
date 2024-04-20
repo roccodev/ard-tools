@@ -4,7 +4,7 @@ use std::{
 };
 
 use anyhow::{anyhow, Result};
-use ardain::ArhFileSystem;
+use ardain::{path::ArhPath, ArhFileSystem};
 use clap::{command, Args, Parser, Subcommand};
 
 mod ls;
@@ -73,4 +73,8 @@ impl InputData {
             None => Err(anyhow!("input .arh must be passed in as --arh")),
         }
     }
+}
+
+pub(crate) fn parse_path(s: &str) -> Result<ArhPath> {
+    Ok(ArhPath::normalize(s)?)
 }

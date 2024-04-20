@@ -5,6 +5,7 @@ use std::{
 
 use ardain::{
     file_alloc::{ArdFileAllocator, CompressionStrategy},
+    path::ArhPath,
     ArdReader, ArdWriter, ArhFileSystem,
 };
 
@@ -18,8 +19,11 @@ fn read_write() {
     let mut buf = Cursor::new(std::fs::read(ard_path).unwrap());
     let mut writer = ArdWriter::new(&mut buf);
 
-    let btl_bdat = arh.get_file_info("/bdat/btl.bdat").unwrap().id;
-    let new_file = arh.create_file("/test_file").unwrap().id;
+    let btl_path = ArhPath::normalize("/bdat/btl.bdat").unwrap();
+    let new_path = ArhPath::normalize("test_file").unwrap();
+
+    let btl_bdat = arh.get_file_info(&btl_path).unwrap().id;
+    let new_file = arh.create_file(&new_path).unwrap().id;
     let mut allocator = ArdFileAllocator::new(&mut arh, &mut writer);
     allocator
         .write_new_file(new_file, &[0, 1, 2, 3, 4, 5], CompressionStrategy::None)
@@ -34,12 +38,12 @@ fn read_write() {
 
     buf.set_position(0);
     let bdat_read_back = ArdReader::new(&mut buf)
-        .entry(arh.get_file_info("/bdat/btl.bdat").unwrap())
+        .entry(arh.get_file_info(&btl_path).unwrap())
         .read()
         .unwrap();
     buf.set_position(0);
     let new_read_back = ArdReader::new(&mut buf)
-        .entry(arh.get_file_info("/test_file").unwrap())
+        .entry(arh.get_file_info(&new_path).unwrap())
         .read()
         .unwrap();
     assert_eq!(&new_read_back, &[0, 1, 2, 3, 4, 5]);

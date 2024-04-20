@@ -10,6 +10,7 @@ use crate::{
     arh_ext::ArhExtSection,
     error::{Error, Result},
     opts::ArhOptions,
+    path::ArhPath,
 };
 
 pub struct ArhFileSystem {
@@ -55,29 +56,29 @@ impl ArhFileSystem {
 
     // Node queries
 
-    pub fn is_file(&self, path: &str) -> bool {
+    pub fn is_file(&self, path: &ArhPath) -> bool {
         self.get_file_info(path).is_some()
     }
 
-    pub fn is_dir(&self, path: &str) -> bool {
+    pub fn is_dir(&self, path: &ArhPath) -> bool {
         self.get_dir(path).is_some()
     }
 
-    pub fn exists(&self, path: &str) -> bool {
+    pub fn exists(&self, path: &ArhPath) -> bool {
         self.is_dir(path) || self.is_file(path)
     }
 
-    pub fn get_file_info(&self, path: &str) -> Option<&FileMeta> {
+    pub fn get_file_info(&self, path: &ArhPath) -> Option<&FileMeta> {
         self.get_file_id(path)
             .and_then(|(id, _)| self.arh.file_table.get_meta(id))
     }
 
-    pub fn get_file_info_mut(&mut self, path: &str) -> Option<&mut FileMeta> {
+    pub fn get_file_info_mut(&mut self, path: &ArhPath) -> Option<&mut FileMeta> {
         self.get_file_id(path)
             .and_then(|(id, _)| self.arh.file_table.get_meta_mut(id))
     }
 
-    pub fn get_dir(&self, path: &str) -> Option<&DirNode> {
+    pub fn get_dir(&self, path: &ArhPath) -> Option<&DirNode> {
         if path.is_empty() {
             return None;
         }
@@ -101,9 +102,10 @@ impl ArhFileSystem {
     }
 
     /// Returns the file ID and leaf node ID for the given path.
-    fn get_file_id(&self, mut path: &str) -> Option<(u32, i32)> {
+    fn get_file_id(&self, path: &ArhPath) -> Option<(u32, i32)> {
         let nodes = &self.arh.path_dictionary();
         let mut cur = (0, nodes.node(0));
+        let mut path = path.as_str();
 
         while !cur.1.is_leaf() {
             if path.is_empty() {
@@ -132,7 +134,7 @@ impl ArhFileSystem {
 
     // Structural modifications
 
-    pub fn create_file(&mut self, full_path: &str) -> Result<&mut FileMeta> {
+    pub fn create_file(&mut self, full_path: &ArhPath) -> Result<&mut FileMeta> {
         if self.get_file_info(full_path).is_some() {
             return Err(Error::FsAlreadyExists);
         }
@@ -141,7 +143,7 @@ impl ArhFileSystem {
         let (last, mut last_parent, mut path) = {
             let nodes = &self.arh.path_dictionary().nodes;
             let mut cur = (0, &nodes[0]);
-            let mut path = full_path;
+            let mut path = full_path.as_str();
             let mut last_parent = 0;
 
             while !cur.1.is_leaf() {
@@ -275,7 +277,7 @@ impl ArhFileSystem {
         Ok(self.arh.file_table.get_meta_mut(id).unwrap())
     }
 
-    pub fn delete_file(&mut self, path: &str) -> Result<()> {
+    pub fn delete_file(&mut self, path: &ArhPath) -> Result<()> {
         let (file_id, leaf_id) = self.get_file_id(path).ok_or(Error::FsNoEntry)?;
 
         // Probably not optimal (we potentially leave unused nodes dangling),
@@ -300,7 +302,7 @@ impl ArhFileSystem {
     ///
     /// This only updates the in-memory directory tree, it has no effect on the underlying
     /// file system, as the ARH format has no concept of directories.
-    pub fn delete_empty_dir(&mut self, path: &str) -> Result<()> {
+    pub fn delete_empty_dir(&mut self, path: &ArhPath) -> Result<()> {
         self.dir_tree.remove_empty_dir(path);
         Ok(())
     }
@@ -312,7 +314,7 @@ impl ArhFileSystem {
     ///
     /// This operation is atomic. If it fails, the file system will be in the same (visible)
     /// state as before it was attempted.
-    pub fn rename_file(&mut self, path: &str, new_path: &str) -> Result<()> {
+    pub fn rename_file(&mut self, path: &ArhPath, new_path: &ArhPath) -> Result<()> {
         let meta = self.get_file_info(path).copied().ok_or(Error::FsNoEntry)?;
         // We need to delete the file first, because the new name might be in conflict with the old
         // file's name. For instance, some file managers first create a ".part" file which they then
@@ -336,20 +338,18 @@ impl ArhFileSystem {
     ///
     /// No data in the ARD file has to actually be moved, this operation only affects the file
     /// system.
-    pub fn rename_dir(&mut self, path: &str, new_path: &str) -> Result<()> {
+    pub fn rename_dir(&mut self, path: &ArhPath, new_path: &ArhPath) -> Result<()> {
         let dir = self.get_dir(path).ok_or(Error::FsNoEntry)?;
         let relative_paths = dir.children_paths();
         for (i, child) in relative_paths.iter().enumerate() {
             let child = &child[1..];
-            if let Err(e) =
-                self.rename_file(&format!("{path}/{child}"), &format!("{new_path}/{child}"))
-            {
+            if let Err(e) = self.rename_file(&path.join(child), &new_path.join(child)) {
                 // Attempt rollback and panic if any operation fails.
                 // This is currently implemented by renaming back the files for which the operation
                 // succeeded. Another possibility is to save the state of the file system before
                 // the operation.
                 for child in &relative_paths[..i] {
-                    self.rename_file(&format!("{new_path}/{child}"), &format!("{path}/{child}"))
+                    self.rename_file(&new_path.join(child), &path.join(child))
                         .unwrap();
                 }
                 return Err(e);

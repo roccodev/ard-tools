@@ -1,6 +1,9 @@
 use std::{collections::VecDeque, fs::File, io::Cursor};
 
-use ardain::{ArhFileSystem, DirEntry};
+use ardain::{
+    path::{ArhPath, ARH_PATH_ROOT},
+    ArhFileSystem, DirEntry,
+};
 
 #[test]
 fn check_initial_reachable() {
@@ -22,9 +25,10 @@ fn create_files() {
         "/root.txt",
         "/noext",
         "/a/very/long/directory/path/file.txt",
-    ];
+    ]
+    .map(|s| ArhPath::normalize(s).unwrap());
     for f in files {
-        arh.create_file(f).unwrap();
+        arh.create_file(&f).unwrap();
         check_and_read_back(&mut arh, |arh| {
             println!("Checking after adding {f}");
             check_reachable(&arh);
@@ -36,9 +40,9 @@ fn create_files() {
 #[should_panic = "FsFileNameExtended"]
 fn create_error_extended() {
     let mut arh = load_arh();
-    let files = ["/file.tar", "/file.tar.gz"];
+    let files = ["/file.tar", "/file.tar.gz"].map(|s| ArhPath::normalize(s).unwrap());
     for f in files {
-        arh.create_file(f).unwrap();
+        arh.create_file(&f).unwrap();
         check_and_read_back(&mut arh, |arh| {
             println!("Checking after adding {f}");
             check_reachable(&arh);
@@ -50,7 +54,8 @@ fn create_error_extended() {
 #[should_panic = "FsFileNameExtended"]
 fn create_error_into_extended() {
     let mut arh = load_arh();
-    arh.create_file("/bdat/fld.bd").unwrap();
+    arh.create_file(&ArhPath::normalize("/bdat/fld.bd").unwrap())
+        .unwrap();
     check_and_read_back(&mut arh, |arh| check_reachable(&arh));
 }
 
@@ -64,7 +69,8 @@ fn delete_files() {
         "/map/ma66a.wismhd",
         "/map/ma66a.wismda",
         "/data_sheet/data_sheet.bin",
-    ];
+    ]
+    .map(|s| ArhPath::normalize(s).unwrap());
     let create_and_delete = [
         "/bdat/test.bdat2",
         "/bdat/test.bdat3",
@@ -72,17 +78,18 @@ fn delete_files() {
         "/bdat/test.bdat50",
         "/bdat/btl.bdat",
         "/in_root",
-    ];
+    ]
+    .map(|s| ArhPath::normalize(s).unwrap());
     for f in files {
-        arh.delete_file(f).unwrap();
+        arh.delete_file(&f).unwrap();
         check_and_read_back(&mut arh, |arh| {
             println!("Checking that {f} is no longer reachable");
-            assert!(!arh.is_file(f));
+            assert!(!arh.is_file(&f));
             println!("Checking reachable after removing {f}");
             check_reachable(&arh);
         });
     }
-    for f in create_and_delete {
+    for f in &create_and_delete {
         arh.create_file(f).unwrap();
         check_and_read_back(&mut arh, |arh| {
             println!("Checking that {f} is now reachable");
@@ -112,7 +119,8 @@ fn rename_files() {
         "/map/ma66a.wismhd",
         "/map/ma66a.wismda",
         "/data_sheet/data_sheet.bin",
-    ];
+    ]
+    .map(|s| ArhPath::normalize(s).unwrap());
     for f in files {
         // Rename each file to the reverse of its components
         // (e.g. "/bdat/btl.bdat" -> "/tadb/tadb.ltb")
@@ -127,13 +135,14 @@ fn rename_files() {
                 })
                 .collect::<String>()
         );
-        let reverse_path = &reverse_path[..reverse_path.len() - 1];
+        let reverse_path =
+            &dbg!(ArhPath::normalize(&reverse_path[..reverse_path.len() - 1]).unwrap());
         println!("Checking that {f} was reachable");
-        let meta = *arh.get_file_info(f).unwrap();
-        arh.rename_file(f, &reverse_path).unwrap();
+        let meta = *arh.get_file_info(&f).unwrap();
+        arh.rename_file(&f, &reverse_path).unwrap();
         check_and_read_back(&mut arh, |arh| {
             println!("Checking that {f} is no longer reachable");
-            assert!(!arh.is_file(f));
+            assert!(!arh.is_file(&f));
             println!("Checking that {reverse_path} is now reachable");
             let new_meta = *arh.get_file_info(reverse_path).unwrap();
             assert_eq!(meta, new_meta);
@@ -144,18 +153,18 @@ fn rename_files() {
 }
 
 fn check_reachable(arh: &ArhFileSystem) {
-    let node = arh.get_dir("/").unwrap();
+    let node = arh.get_dir(&ARH_PATH_ROOT).unwrap();
     let mut queue = VecDeque::new();
-    queue.push_back((node, "".to_string()));
+    queue.push_back((node, ARH_PATH_ROOT));
     while let Some((node, path)) = queue.pop_back() {
         match &node.entry {
             DirEntry::File => {
-                let path = &format!("{path}/{}", node.name)[2..];
-                assert!(arh.is_file(path), "{path} does not exist");
+                let path = path.join(&node.name);
+                assert!(arh.is_file(&path), "{path} does not exist");
             }
             DirEntry::Directory { children } => {
                 for child in children {
-                    queue.push_back((child, format!("{path}/{}", node.name)));
+                    queue.push_back((child, path.join(&node.name)));
                 }
             }
         }

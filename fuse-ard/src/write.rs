@@ -8,6 +8,7 @@ use std::io::Write;
 use anyhow::Result;
 use ardain::{
     file_alloc::{ArdFileAllocator, CompressionStrategy},
+    path::ArhPath,
     ArhFileSystem,
 };
 use log::warn;
@@ -20,7 +21,7 @@ pub struct FileBuffers {
 }
 
 pub struct FileBuffer {
-    path: String,
+    path: ArhPath,
     operations: Vec<Operation>,
 }
 
@@ -30,7 +31,7 @@ enum Operation {
 }
 
 impl FileBuffers {
-    pub fn open(&mut self, path: String) -> u64 {
+    pub fn open(&mut self, path: ArhPath) -> u64 {
         match self.open_files.binary_search_by_key(&&path, |f| &f.path) {
             Ok(i) => i.try_into().unwrap(),
             Err(i) => {
