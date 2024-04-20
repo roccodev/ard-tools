@@ -107,11 +107,12 @@ impl ArhFileSystem {
                 }
                 return None;
             }
-            let next = cur.1.next_after_chr(path.as_bytes()[0]);
-            if !nodes.node(next).is_child(cur.0) {
+            let next_id = cur.1.next_after_chr(path.as_bytes()[0]);
+            let next = nodes.get_node(next_id)?;
+            if !next.is_child(cur.0) {
                 return None;
             }
-            cur = (next, nodes.node(next));
+            cur = (next_id, next);
             path = &path[1..];
         }
         let DictNode::Leaf { string_offset, .. } = *cur.1 else {
@@ -171,6 +172,10 @@ impl ArhFileSystem {
             let mut old_str = old_str.as_str();
             let mut node_block = self.arh.path_dictionary().node(previous).next();
             let mut last = final_node.0 as i32;
+            // We take a clone here because some branches might fail, and failure is only detected
+            // after modifying part of it. We correctly throw errors but we don't want to leave
+            // the file system in an inconsistent state.
+            let mut path_dict = self.arh.path_dictionary().clone();
 
             while !path.is_empty()
                 && !old_str.is_empty()
@@ -179,27 +184,21 @@ impl ArhFileSystem {
                 // Continue the XOR path while characters match
                 let chr = old_str.as_bytes()[0] as i32;
                 let node_idx = node_block ^ chr;
-                let next_node = self.arh.path_dictionary().node(node_idx);
+                let next_node = path_dict.node(node_idx);
                 let next;
                 if next_node.is_free() {
                     // Next node is free, occupy it
                     next = node_idx;
-                    *self.arh.path_dictionary_mut().node_mut(next) = DictNode::Occupied {
+                    *path_dict.node_mut(next) = DictNode::Occupied {
                         previous: last,
                         next: 0xFEFE,
                     };
-                    self.arh
-                        .path_dictionary_mut()
-                        .node_mut(last)
-                        .attach_next(node_block);
+                    path_dict.node_mut(last).attach_next(node_block);
                 } else {
                     // Otherwise, allocate a block
-                    node_block = self
-                        .arh
-                        .path_dictionary_mut()
-                        .allocate_new_block(last as i32) as i32;
+                    node_block = path_dict.allocate_new_block(last as i32) as i32;
                     next = node_block ^ path.as_bytes()[0] as i32;
-                    *self.arh.path_dictionary_mut().node_mut(next) = DictNode::Occupied {
+                    *path_dict.node_mut(next) = DictNode::Occupied {
                         previous: last,
                         next: 0xBADD,
                     };
@@ -215,23 +214,22 @@ impl ArhFileSystem {
 
             // Found a level where the two strings differ. Make a block for them, copy the leaf node
             // to it and pass it on.
-            let next_block = self.arh.path_dictionary_mut().allocate_new_block(last);
-            self.arh
-                .path_dictionary_mut()
-                .node_mut(last)
-                .attach_next(next_block as i32);
+            let next_block = path_dict.allocate_new_block(last);
+            path_dict.node_mut(last).attach_next(next_block as i32);
 
             let id = self.arh.strings_mut().push(&old_str[1..], old_file);
             let idx = next_block ^ old_str.as_bytes()[0] as i32;
-            *self.arh.path_dictionary_mut().node_mut(idx) = DictNode::Leaf {
+            *path_dict.node_mut(idx) = DictNode::Leaf {
                 previous: last,
                 string_offset: id,
             };
 
             let final_idx = next_block ^ path.as_bytes()[0] as i32;
-            final_node = (final_idx, *self.arh.path_dictionary().node(final_idx));
+            final_node = (final_idx, *path_dict.node(final_idx));
             last_parent = last;
             path = &path[1..];
+
+            *self.arh.path_dictionary_mut() = path_dict;
         }
 
         // We need to diverge from the existing path. If the next expected node is free,
@@ -300,21 +298,47 @@ impl ArhFileSystem {
         Ok(())
     }
 
+    /// Renames a file. This also supports moving across directories.
+    ///
+    /// No data in the ARD file has to actually be moved, this operation only affects the file
+    /// system.
+    ///
+    /// This operation is atomic. If it fails, the file system will be in the same (visible)
+    /// state as before it was attempted.
     pub fn rename_file(&mut self, path: &str, new_path: &str) -> Result<()> {
         let meta = self.get_file_info(path).copied().ok_or(Error::FsNoEntry)?;
-        // TODO: make atomic
-        self.delete_file(path)?;
         self.create_file(new_path)?.clone_from(&meta);
+        if let Err(e) = self.delete_file(path) {
+            // Delete the new file if deleting the old one fails.
+            // This shouldn't fail as we just created it.
+            self.delete_file(new_path).unwrap();
+            return Err(e);
+        }
         Ok(())
     }
 
+    /// Renames a directory, recursively moving its children.
+    ///
+    /// No data in the ARD file has to actually be moved, this operation only affects the file
+    /// system.
     pub fn rename_dir(&mut self, path: &str, new_path: &str) -> Result<()> {
         let dir = self.get_dir(path).ok_or(Error::FsNoEntry)?;
         let relative_paths = dir.children_paths();
-        for child in relative_paths {
-            // TODO: make atomic
+        for (i, child) in relative_paths.iter().enumerate() {
             let child = &child[1..];
-            self.rename_file(&format!("{path}/{child}"), &format!("{new_path}/{child}"))?;
+            if let Err(e) =
+                self.rename_file(&format!("{path}/{child}"), &format!("{new_path}/{child}"))
+            {
+                // Attempt rollback and panic if any operation fails.
+                // This is currently implemented by renaming back the files for which the operation
+                // succeeded. Another possibility is to save the state of the file system before
+                // the operation.
+                for child in &relative_paths[..i] {
+                    self.rename_file(&format!("{new_path}/{child}"), &format!("{path}/{child}"))
+                        .unwrap();
+                }
+                return Err(e);
+            }
         }
         self.dir_tree.remove_empty_dir(path);
         Ok(())

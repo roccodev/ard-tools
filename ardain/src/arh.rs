@@ -280,8 +280,12 @@ impl PathDictionary {
         String::from_utf8(path).unwrap()
     }
 
+    pub fn get_node(&self, index: i32) -> Option<&DictNode> {
+        usize::try_from(index).ok().and_then(|i| self.nodes.get(i))
+    }
+
     pub fn node(&self, index: i32) -> &DictNode {
-        &self.nodes[usize::try_from(index).expect("index >= 0")]
+        self.get_node(index).expect("node not found")
     }
 
     pub fn node_mut(&mut self, index: i32) -> &mut DictNode {

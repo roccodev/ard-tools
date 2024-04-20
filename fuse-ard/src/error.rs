@@ -2,7 +2,7 @@
 
 use ardain::error::Error;
 use libc::{c_int, EEXIST, EINVAL, EIO, ENOENT};
-use log::warn;
+use log::{error, warn};
 
 pub trait LibcError {
     fn errno(&self) -> c_int;
@@ -40,7 +40,7 @@ impl LibcError for Error {
     fn handle(&self) {
         match self {
             e @ Error::FsFileNameExtended => warn!("{e}"),
-            e if e.errno() == EIO => panic!("{e}"),
+            e if e.errno() == EIO => error!("{e}"),
             _ => {}
         }
     }
@@ -52,6 +52,6 @@ impl LibcError for anyhow::Error {
     }
 
     fn handle(&self) {
-        panic!("{}", self)
+        error!("{}", self)
     }
 }

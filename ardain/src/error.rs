@@ -12,7 +12,7 @@ pub enum Error {
     Io(#[from] io::Error),
     #[error(transparent)]
     SizeConvert(#[from] TryFromIntError),
-    #[error("ARD entry decompression: {0}")]
+    #[error("ARD entry decompression: {0}, corrupted ARD entry?")]
     ArdDecompress(#[from] DecompressStreamError),
     #[error("FS: no such file or directory")]
     FsNoEntry,
