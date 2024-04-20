@@ -8,10 +8,10 @@ use std::{
     time::{Duration, UNIX_EPOCH},
 };
 
-use ardain::{error::Result, ArhFileSystem, DirEntry, DirNode, FileMeta};
+use ardain::{error::Result, path::ARH_PATH_MAX_LEN, ArhFileSystem, DirEntry, DirNode, FileMeta};
 use fuser::{
     FileAttr, FileType, Filesystem, ReplyAttr, ReplyData, ReplyDirectory, ReplyEmpty, ReplyEntry,
-    ReplyOpen, ReplyWrite, Request,
+    ReplyOpen, ReplyStatfs, ReplyWrite, Request,
 };
 use libc::{EBADFD, EEXIST, ENOENT, ENOTDIR, ENOTEMPTY, ENOTSUP, O_RDWR, O_WRONLY};
 use log::debug;
@@ -162,6 +162,20 @@ impl ArhFuseSystem {
 }
 
 impl Filesystem for ArhFuseSystem {
+    fn statfs(&mut self, _req: &Request, _ino: u64, reply: ReplyStatfs) {
+        let block_size = self.arh.block_size();
+        reply.statfs(
+            u64::MAX,
+            u64::MAX,
+            u64::MAX,
+            u64::MAX,
+            u64::MAX,
+            block_size,
+            ARH_PATH_MAX_LEN.try_into().unwrap(),
+            block_size,
+        )
+    }
+
     fn lookup(&mut self, _req: &Request, parent: u64, name: &OsStr, reply: ReplyEntry) {
         let Some(name) = self.build_path(parent, name) else {
             debug!("[LOOKUP] invalid parent inode {parent}");

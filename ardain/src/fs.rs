@@ -7,7 +7,7 @@ use binrw::{BinRead, BinResult, BinWrite};
 
 use crate::{
     arh::{Arh, DictNode, FileMeta},
-    arh_ext::{ArhExtSection, BlockAllocTable},
+    arh_ext::ArhExtSection,
     error::{Error, Result},
     opts::ArhOptions,
 };
@@ -44,6 +44,13 @@ impl ArhFileSystem {
             opts: options,
             arh,
         })
+    }
+
+    /// Returns the size of a single block, in bytes.
+    ///
+    /// This can be changed by loading the file system using [`Self::load_with_options`].
+    pub fn block_size(&self) -> u32 {
+        1 << self.opts.ext_block_size_pow
     }
 
     // Node queries

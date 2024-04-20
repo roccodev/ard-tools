@@ -1,5 +1,10 @@
 use std::{fmt::Display, ops::Deref};
 
+/// The maximum length of an absolute path in an ARH file system.
+///
+/// Includes the leading slash.
+pub const ARH_PATH_MAX_LEN: usize = 256;
+
 /// A valid (absolute) path in an ARH file system.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct ArhPath(String);
