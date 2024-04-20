@@ -114,8 +114,7 @@ impl ArhFuseSystem {
         }
         let mut hash = DefaultHasher::new();
         name.hash(&mut hash);
-        let hash = hash.finish();
-        hash
+        hash.finish()
     }
 
     fn make_dir_attr(&self, _dir: &DirNode, inode: u64) -> FileAttr {
@@ -209,11 +208,11 @@ impl Filesystem for ArhFuseSystem {
             reply.error(ENOENT);
             return;
         };
-        if let Some(dir) = self.arh.get_dir(&name) {
+        if let Some(dir) = self.arh.get_dir(name) {
             reply.attr(&TTL, &self.make_dir_attr(dir, ino));
             return;
         }
-        if let Some(file) = self.arh.get_file_info(&name) {
+        if let Some(file) = self.arh.get_file_info(name) {
             reply.attr(&TTL, &self.make_file_attr(file, ino));
             return;
         }
@@ -250,7 +249,7 @@ impl Filesystem for ArhFuseSystem {
             return;
         };
 
-        if let Some(file) = self.arh.get_file_info(&name) {
+        if let Some(file) = self.arh.get_file_info(name) {
             reply.attr(&TTL, &self.make_file_attr(file, ino));
             return;
         }

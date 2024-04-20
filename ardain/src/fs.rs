@@ -82,7 +82,7 @@ impl ArhFileSystem {
         if path.is_empty() {
             return None;
         }
-        let parts = path.split("/").collect::<Vec<_>>();
+        let parts = path.split('/').collect::<Vec<_>>();
         let mut node = &self.dir_tree;
         for part in &parts[1..] {
             if part.is_empty() {
@@ -180,7 +180,7 @@ impl ArhFileSystem {
             let old_str = old_str.to_string();
             let mut old_str = old_str.as_str();
             let mut node_block = self.arh.path_dictionary().node(previous).next();
-            let mut last = final_node.0 as i32;
+            let mut last = final_node.0;
             // We take a clone here because some branches might fail, and failure is only detected
             // after modifying part of it. We correctly throw errors but we don't want to leave
             // the file system in an inconsistent state.
@@ -205,14 +205,14 @@ impl ArhFileSystem {
                     path_dict.node_mut(last).attach_next(node_block);
                 } else {
                     // Otherwise, allocate a block
-                    node_block = path_dict.allocate_new_block(last as i32) as i32;
+                    node_block = path_dict.allocate_new_block(last);
                     next = node_block ^ path.as_bytes()[0] as i32;
                     *path_dict.node_mut(next) = DictNode::Occupied {
                         previous: last,
                         next: 0xBADD,
                     };
                 }
-                last = next as i32;
+                last = next;
                 old_str = &old_str[1..];
                 path = &path[1..];
             }
@@ -224,7 +224,7 @@ impl ArhFileSystem {
             // Found a level where the two strings differ. Make a block for them, copy the leaf node
             // to it and pass it on.
             let next_block = path_dict.allocate_new_block(last);
-            path_dict.node_mut(last).attach_next(next_block as i32);
+            path_dict.node_mut(last).attach_next(next_block);
 
             let id = self.arh.strings_mut().push(&old_str[1..], old_file);
             let idx = next_block ^ old_str.as_bytes()[0] as i32;
@@ -248,7 +248,7 @@ impl ArhFileSystem {
             let idx = self
                 .arh
                 .path_dictionary_mut()
-                .allocate_new_block(final_node.0 as i32)
+                .allocate_new_block(final_node.0)
                 ^ path.as_bytes()[0] as i32;
             last_parent = final_node.0;
             final_node = (idx, *self.arh.path_dictionary().node(idx));
@@ -268,7 +268,7 @@ impl ArhFileSystem {
         );
         let str_offset = self.arh.strings_mut().push(path, id);
         *self.arh.path_dictionary_mut().node_mut(final_node.0) = DictNode::Leaf {
-            previous: last_parent as i32,
+            previous: last_parent,
             string_offset: str_offset,
         };
 
@@ -416,9 +416,9 @@ impl DirNode {
     }
 
     fn insert_file_entry(&mut self, path: String) {
-        assert!(path.starts_with("/"), "path must start at the root");
+        assert!(path.starts_with('/'), "path must start at the root");
         let mut node = self;
-        let parts = path.split("/").collect::<Vec<_>>();
+        let parts = path.split('/').collect::<Vec<_>>();
         for (comp_idx, comp) in parts[1..].iter().enumerate() {
             let next_node = {
                 let DirEntry::Directory { ref mut children } = node.entry else {
@@ -451,38 +451,33 @@ impl DirNode {
     }
 
     fn remove_file_entry(&mut self, path: &str) {
-        assert!(path.starts_with("/"), "path must start at the root");
-        let parts = path.split("/").collect::<Vec<_>>();
-
-        fn delete_node(node: &mut DirNode, parts: &[&str]) -> bool {
-            let Some(part) = parts.first() else {
-                return true;
-            };
-            if let DirEntry::Directory { ref mut children } = node.entry {
-                if let Ok(i) = children.binary_search_by_key(part, |c| &c.name) {
+        assert!(path.starts_with('/'), "path must start at the root");
+        let mut node = self;
+        let parts = path.split('/').collect::<Vec<_>>();
+        for comp in &parts[1..] {
+            let next_node = {
+                let DirEntry::Directory { ref mut children } = node.entry else {
+                    continue;
+                };
+                if let Ok(i) = children.binary_search_by_key(comp, |c| &c.name) {
                     let child = &mut children[i];
                     if matches!(child.entry, DirEntry::File) {
                         children.remove(i);
+                        break;
                     } else {
-                        if !delete_node(&mut children[i], &parts[1..]) {
-                            // Remove empty directories
-                            //children.remove(i);
-                        }
+                        &mut children[i]
                     }
-                    if children.is_empty() {
-                        return false;
-                    }
+                } else {
+                    break;
                 }
-            }
-            true
+            };
+            node = next_node;
         }
-
-        delete_node(self, &parts[1..]);
     }
 
     fn remove_empty_dir(&mut self, path: &str) {
-        assert!(path.starts_with("/"), "path must start at the root");
-        let parts = path.split("/").collect::<Vec<_>>();
+        assert!(path.starts_with('/'), "path must start at the root");
+        let parts = path.split('/').collect::<Vec<_>>();
         let mut node = self;
 
         for (comp_idx, comp) in parts[1..].iter().enumerate() {

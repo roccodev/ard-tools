@@ -390,9 +390,7 @@ impl FileTable {
     }
 
     pub fn delete_entry(&mut self, file_id: u32) -> Option<FileMeta> {
-        self.files
-            .get_mut(file_id as usize)
-            .map(|f| std::mem::take(f))
+        self.files.get_mut(file_id as usize).map(std::mem::take)
     }
 
     pub fn files(&self) -> &[FileMeta] {

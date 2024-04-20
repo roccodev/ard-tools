@@ -38,7 +38,7 @@ impl FileBuffers {
                 self.open_files.insert(
                     i,
                     FileBuffer {
-                        path: path,
+                        path,
                         operations: Vec::new(),
                     },
                 );
@@ -120,7 +120,7 @@ impl Operation {
                         buffer.extend_from_slice(&data[offset..]);
                     }
                 } else {
-                    buffer.extend_from_slice(&data);
+                    buffer.extend_from_slice(data);
                 }
             }
         }

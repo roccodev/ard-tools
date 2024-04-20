@@ -47,13 +47,11 @@ fn main() {
     info!("File system will use uid={uid}, gid={gid}");
 
     let arh_path = matches.get_one::<String>("arh").unwrap();
-    let arh = File::open(&arh_path).unwrap();
+    let arh = File::open(arh_path).unwrap();
     let ard = matches
         .get_one::<String>("ard")
         .map(|path| StandardArdFile::new(path).unwrap());
-    let out_arh = matches
-        .get_one::<String>("arhout")
-        .unwrap_or_else(|| &arh_path);
+    let out_arh = matches.get_one::<String>("arhout").unwrap_or(arh_path);
     let fs = ArhFuseSystem::load(arh, ard, out_arh, (uid, gid)).unwrap();
 
     let mount_point = matches.get_one::<String>("mount_point").unwrap();

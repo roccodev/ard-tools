@@ -68,7 +68,7 @@ impl<'a, 'w, W: Write + Seek> ArdFileAllocator<'a, 'w, W> {
         let total_len: u64 = data.size_on_disk().try_into().unwrap();
         let offset = self.block_table.find_free_space(total_len);
         data.write(self.writer.entry(offset)?)?;
-        Self::update_meta(&mut self.block_table, &data, file, offset);
+        Self::update_meta(self.block_table, &data, file, offset);
         Ok(())
     }
 
@@ -90,17 +90,17 @@ impl<'a, 'w, W: Write + Seek> ArdFileAllocator<'a, 'w, W> {
         if data.size_on_disk() <= file.compressed_size.try_into().unwrap() {
             // If it fits, just write and update size
             data.write(self.writer.entry(file.offset)?)?;
-            Self::update_meta(&mut self.block_table, &data, file, file.offset);
+            Self::update_meta(self.block_table, &data, file, file.offset);
             return Ok(());
         }
         let total_len: u64 = data.size_on_disk().try_into().unwrap();
-        let offset = self.block_table.find_space_replace(&file, total_len);
+        let offset = self.block_table.find_space_replace(file, total_len);
         data.write(self.writer.entry(offset)?)?;
         // First, mark the old file as unoccupied
-        self.block_table.mark(&file, false);
+        self.block_table.mark(file, false);
         // After updating the file entry, this will mark the new one as occupied
         // (no problem if they overlap)
-        Self::update_meta(&mut self.block_table, &data, file, offset);
+        Self::update_meta(self.block_table, &data, file, offset);
         Ok(())
     }
 
@@ -124,7 +124,7 @@ impl<'a, 'w, W: Write + Seek> ArdFileAllocator<'a, 'w, W> {
         meta.set_flag(FileFlag::HasXbc1Header, has_xbc1);
         meta.uncompressed_size = unc_size;
         meta.compressed_size = data.size_on_disk().try_into().unwrap();
-        alloc_table.mark(&meta, true);
+        alloc_table.mark(meta, true);
     }
 }
 
@@ -165,7 +165,7 @@ impl<'a> EntryFile<'a> {
         match self {
             EntryFile::Raw(buf) => buf,
             EntryFile::RawWrapped(buf) => buf,
-            EntryFile::Compressed(buf, _) => &buf,
+            EntryFile::Compressed(buf, _) => buf,
         }
     }
 }

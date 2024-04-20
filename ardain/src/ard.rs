@@ -96,7 +96,7 @@ impl<R: Read + Seek> EntryReader<R> {
             let mut buf = vec![0u8; size.try_into()?];
             let reader = &mut self.reader;
             reader.seek(SeekFrom::Current(offset_in_entry.try_into()?))?;
-            reader.take(size.into()).read_exact(&mut buf)?;
+            reader.take(size).read_exact(&mut buf)?;
             Ok(buf)
         }
     }
