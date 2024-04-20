@@ -307,13 +307,21 @@ impl ArhFileSystem {
     /// state as before it was attempted.
     pub fn rename_file(&mut self, path: &str, new_path: &str) -> Result<()> {
         let meta = self.get_file_info(path).copied().ok_or(Error::FsNoEntry)?;
-        self.create_file(new_path)?.clone_from(&meta);
-        if let Err(e) = self.delete_file(path) {
-            // Delete the new file if deleting the old one fails.
-            // This shouldn't fail as we just created it.
-            self.delete_file(new_path).unwrap();
-            return Err(e);
-        }
+        // We need to delete the file first, because the new name might be in conflict with the old
+        // file's name. For instance, some file managers first create a ".part" file which they then
+        // rename to the regular file name without ".part". This type of file names is not supported
+        // by the file system.
+        self.delete_file(path)?;
+        let new_file = match self.create_file(new_path) {
+            Ok(f) => f,
+            Err(e) => {
+                // Re-create the old file if creating the new one fails.
+                // This shouldn't fail as we just deleted it.
+                self.create_file(path).unwrap().clone_from(&meta);
+                return Err(e);
+            }
+        };
+        new_file.clone_from(&meta);
         Ok(())
     }
 

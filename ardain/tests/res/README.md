@@ -1,1 +1,1 @@
-Place `bf3.arh`, `bf3_dlc04.arh`, and `bf3_d in this directory.
+Place `bf3.arh`, `bf3_dlc04.arh`, and `bf3_dlc04.ard` in this directory.

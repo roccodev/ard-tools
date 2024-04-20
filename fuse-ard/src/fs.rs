@@ -3,12 +3,12 @@ use std::{
     ffi::OsStr,
     fs::File,
     hash::{Hash, Hasher},
-    io::{BufReader, BufWriter, Read, Seek},
+    io::{BufWriter, Read, Seek},
     path::{Path, PathBuf},
     time::{Duration, UNIX_EPOCH},
 };
 
-use ardain::{error::Result, ArdReader, ArhFileSystem, DirEntry, DirNode, FileMeta};
+use ardain::{error::Result, ArhFileSystem, DirEntry, DirNode, FileMeta};
 use fuser::{
     FileAttr, FileType, Filesystem, ReplyAttr, ReplyData, ReplyDirectory, ReplyEmpty, ReplyEntry,
     ReplyOpen, ReplyWrite, Request,
@@ -24,6 +24,10 @@ pub struct ArhFuseSystem {
     inode_cache: HashMap<u64, (String, u64)>,
     out_arh: PathBuf,
     write_buffers: FileBuffers,
+    /// Owner uid for files
+    uid: u32,
+    /// Owner gid for files
+    gid: u32,
 }
 
 const TTL: Duration = Duration::from_secs(1);
@@ -34,6 +38,7 @@ impl ArhFuseSystem {
         arh: impl Read + Seek,
         ard: Option<StandardArdFile>,
         out_arh: impl AsRef<Path>,
+        (uid, gid): (u32, u32),
     ) -> anyhow::Result<Self> {
         let fs = ArhFileSystem::load(arh)?;
         Ok(Self {
@@ -42,6 +47,8 @@ impl ArhFuseSystem {
             ard,
             out_arh: PathBuf::from(out_arh.as_ref()),
             write_buffers: FileBuffers::default(),
+            uid,
+            gid,
         })
     }
 
@@ -106,6 +113,52 @@ impl ArhFuseSystem {
         let hash = hash.finish();
         hash
     }
+
+    fn make_dir_attr(&self, _dir: &DirNode, inode: u64) -> FileAttr {
+        FileAttr {
+            ino: inode,
+            size: 0,
+            blocks: 0,
+            atime: UNIX_EPOCH,
+            mtime: UNIX_EPOCH,
+            ctime: UNIX_EPOCH,
+            crtime: UNIX_EPOCH,
+            kind: FileType::Directory,
+            perm: 0o775,
+            nlink: 2,
+            uid: self.uid,
+            gid: self.gid,
+            rdev: 0,
+            blksize: 0,
+            flags: 0,
+        }
+    }
+
+    fn make_file_attr(&self, file: &FileMeta, inode: u64) -> FileAttr {
+        let mut sz = file.uncompressed_size.into();
+        if sz == 0 && file.compressed_size != 48 {
+            sz = file.compressed_size.into();
+        }
+        FileAttr {
+            ino: inode,
+            size: sz,
+            blocks: 0,
+            atime: UNIX_EPOCH,
+            mtime: UNIX_EPOCH,
+            ctime: UNIX_EPOCH,
+            crtime: UNIX_EPOCH,
+            kind: FileType::RegularFile,
+            perm: 0o664,
+            // Qt marks files with nlink = 0 as deleted. Let's count the file itself as a hard link,
+            // even if links aren't supported
+            nlink: 1,
+            uid: self.uid,
+            gid: self.gid,
+            rdev: 0,
+            blksize: 0,
+            flags: 0,
+        }
+    }
 }
 
 impl Filesystem for ArhFuseSystem {
@@ -118,12 +171,12 @@ impl Filesystem for ArhFuseSystem {
         let ino = self.get_inode_and_save(name.clone()); // TODO this creates inodes for invalid files too
         if let Some(dir) = self.arh.get_dir(&name) {
             debug!("[LOOKUP:{name}] found directory with inode {ino}");
-            reply.entry(&TTL, &make_dir_attr(dir, ino), 0);
+            reply.entry(&TTL, &self.make_dir_attr(dir, ino), 0);
             return;
         }
         if let Some(file) = self.arh.get_file_info(&name) {
             debug!("[LOOKUP:{name}] found file with inode {ino}");
-            reply.entry(&TTL, &make_file_attr(file, ino), 0);
+            reply.entry(&TTL, &self.make_file_attr(file, ino), 0);
             return;
         }
         debug!("[LOOKUP:{name}] no match");
@@ -137,11 +190,11 @@ impl Filesystem for ArhFuseSystem {
             return;
         };
         if let Some(dir) = self.arh.get_dir(&name) {
-            reply.attr(&TTL, &make_dir_attr(dir, ino));
+            reply.attr(&TTL, &self.make_dir_attr(dir, ino));
             return;
         }
         if let Some(file) = self.arh.get_file_info(&name) {
-            reply.attr(&TTL, &make_file_attr(file, ino));
+            reply.attr(&TTL, &self.make_file_attr(file, ino));
             return;
         }
         debug!("[GETATTR:{name}] no match");
@@ -178,7 +231,7 @@ impl Filesystem for ArhFuseSystem {
         };
 
         if let Some(file) = self.arh.get_file_info(&name) {
-            reply.attr(&TTL, &make_file_attr(file, ino));
+            reply.attr(&TTL, &self.make_file_attr(file, ino));
             return;
         }
         reply.error(ENOENT);
@@ -261,12 +314,13 @@ impl Filesystem for ArhFuseSystem {
             reply.error(ENOTSUP);
             return;
         };
-        let data = ard
-            .reader
-            .entry(file)
-            .skip_take(offset as u64, size.into())
-            .read()
-            .unwrap();
+        let data = fuse_err!(
+            ard.reader
+                .entry(file)
+                .skip_take(offset as u64, size.into())
+                .read(),
+            reply
+        );
         reply.data(&data);
     }
 
@@ -300,8 +354,8 @@ impl Filesystem for ArhFuseSystem {
             return;
         };
         let inode = self.get_inode_and_save(name.clone());
-        let meta = fuse_err!(self.arh.create_file(&name), reply);
-        reply.entry(&TTL, &make_file_attr(&meta, inode), 0);
+        let meta = *fuse_err!(self.arh.create_file(&name), reply);
+        reply.entry(&TTL, &self.make_file_attr(&meta, inode), 0);
     }
 
     fn mkdir(
@@ -329,7 +383,7 @@ impl Filesystem for ArhFuseSystem {
         fuse_err!(self.arh.create_file(&placeholder), reply);
         let inode = self.get_inode_and_save(placeholder);
         let dir = self.arh.get_dir(&name).unwrap();
-        reply.entry(&TTL, &make_dir_attr(dir, inode), 0);
+        reply.entry(&TTL, &self.make_dir_attr(dir, inode), 0);
     }
 
     fn unlink(&mut self, _req: &Request, parent: u64, name: &OsStr, reply: ReplyEmpty) {
@@ -485,49 +539,5 @@ impl Filesystem for ArhFuseSystem {
         }
         self.sync(false)
             .expect("could not sync file system, data may be lost");
-    }
-}
-
-fn make_dir_attr(dir: &DirNode, inode: u64) -> FileAttr {
-    FileAttr {
-        ino: inode,
-        size: 0,
-        blocks: 0,
-        atime: UNIX_EPOCH,
-        mtime: UNIX_EPOCH,
-        ctime: UNIX_EPOCH,
-        crtime: UNIX_EPOCH,
-        kind: FileType::Directory,
-        perm: 0o705,
-        nlink: 2,
-        uid: 0,
-        gid: 0,
-        rdev: 0,
-        blksize: 0,
-        flags: 0,
-    }
-}
-
-fn make_file_attr(file: &FileMeta, inode: u64) -> FileAttr {
-    let mut sz = file.uncompressed_size.into();
-    if sz == 0 && file.compressed_size != 48 {
-        sz = file.compressed_size.into();
-    }
-    FileAttr {
-        ino: inode,
-        size: sz,
-        blocks: 0,
-        atime: UNIX_EPOCH,
-        mtime: UNIX_EPOCH,
-        ctime: UNIX_EPOCH,
-        crtime: UNIX_EPOCH,
-        kind: FileType::RegularFile,
-        perm: 0o700,
-        nlink: 0,
-        uid: 0,
-        gid: 0,
-        rdev: 0,
-        blksize: 0,
-        flags: 0,
     }
 }

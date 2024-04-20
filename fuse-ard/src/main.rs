@@ -9,6 +9,7 @@ use clap::{arg, Command};
 use env_logger::Env;
 use fs::ArhFuseSystem;
 use fuser::MountOption;
+use log::info;
 
 mod error;
 mod fs;
@@ -37,6 +38,14 @@ fn main() {
     }))
     .init();
 
+    let (uid, gid) = if cfg!(unix) {
+        unsafe { (libc::geteuid(), libc::getuid()) }
+    } else {
+        (0, 0)
+    };
+
+    info!("File system will use uid={uid}, gid={gid}");
+
     let arh_path = matches.get_one::<String>("arh").unwrap();
     let arh = File::open(&arh_path).unwrap();
     let ard = matches
@@ -45,12 +54,13 @@ fn main() {
     let out_arh = matches
         .get_one::<String>("arhout")
         .unwrap_or_else(|| &arh_path);
-    let fs = ArhFuseSystem::load(arh, ard, out_arh).unwrap();
+    let fs = ArhFuseSystem::load(arh, ard, out_arh, (uid, gid)).unwrap();
 
     let mount_point = matches.get_one::<String>("mount_point").unwrap();
     let mut opts = vec![
         MountOption::NoExec,
         MountOption::NoAtime,
+        MountOption::DefaultPermissions,
         MountOption::CUSTOM("kernel_cache".to_string()),
     ];
     if debug {

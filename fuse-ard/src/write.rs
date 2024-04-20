@@ -3,7 +3,7 @@
 //! Files stored in ARD files are potentially compressed, so we can't write them in chunks.
 //! We hold onto their data until the user calls `close` or `fsync`.
 
-use std::io::{Seek, Write};
+use std::io::Write;
 
 use anyhow::Result;
 use ardain::{
