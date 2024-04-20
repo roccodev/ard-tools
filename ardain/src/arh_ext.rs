@@ -184,6 +184,10 @@ impl BlockAllocTable {
     }
 
     pub fn mark(&mut self, file: &FileMeta, occupied: bool) {
+        if file.compressed_size == 0 {
+            return;
+        }
+
         let (file_start, file_end) = (file.offset, file.offset + u64::from(file.compressed_size));
         let mut start = file_start >> self.block_size_pow;
         let mut end = file_end.div_ceil(1 << self.block_size_pow);
@@ -280,6 +284,7 @@ mod tests {
             block_arr_count: 0,
             blocks: vec![0b1110000110001100111111110111111111111111111111111111111111111111],
         };
+        assert_eq!(table.find_free_space(1 * BLOCK_SIZE), 24 * BLOCK_SIZE);
         assert_eq!(table.find_free_space(2 * BLOCK_SIZE), 14 * BLOCK_SIZE);
         assert_eq!(table.find_free_space(3 * BLOCK_SIZE), 9 * BLOCK_SIZE);
         assert_eq!(table.find_free_space(4 * BLOCK_SIZE), 3 * BLOCK_SIZE);

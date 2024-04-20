@@ -148,6 +148,42 @@ impl Filesystem for ArhFuseSystem {
         reply.error(ENOENT);
     }
 
+    fn setattr(
+        &mut self,
+        _req: &Request,
+        ino: u64,
+        _mode: Option<u32>,
+        _uid: Option<u32>,
+        _gid: Option<u32>,
+        size: Option<u64>,
+        _atime: Option<fuser::TimeOrNow>,
+        _mtime: Option<fuser::TimeOrNow>,
+        _ctime: Option<std::time::SystemTime>,
+        fh: Option<u64>,
+        _crtime: Option<std::time::SystemTime>,
+        _chgtime: Option<std::time::SystemTime>,
+        _bkuptime: Option<std::time::SystemTime>,
+        _flags: Option<u32>,
+        reply: ReplyAttr,
+    ) {
+        // We're only interested in truncate
+        if let (Some(fh), Some(sz)) = (fh.and_then(|fh| self.write_buffers.get_handle(fh)), size) {
+            fh.truncate(sz);
+        }
+
+        let Some(name) = self.get_path(ino) else {
+            debug!("[SETATTR:{ino}] inode unknown");
+            reply.error(ENOENT);
+            return;
+        };
+
+        if let Some(file) = self.arh.get_file_info(&name) {
+            reply.attr(&TTL, &make_file_attr(file, ino));
+            return;
+        }
+        reply.error(ENOENT);
+    }
+
     fn readdir(
         &mut self,
         _req: &Request,

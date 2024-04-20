@@ -21,12 +21,12 @@ pub struct FileBuffers {
 
 pub struct FileBuffer {
     path: String,
-    chunks: Vec<FileChunk>,
+    operations: Vec<Operation>,
 }
 
-struct FileChunk {
-    data: Vec<u8>,
-    offset: u64,
+enum Operation {
+    Truncate { new_size: u64 },
+    Write { offset: u64, data: Box<[u8]> },
 }
 
 impl FileBuffers {
@@ -38,7 +38,7 @@ impl FileBuffers {
                     i,
                     FileBuffer {
                         path: path,
-                        chunks: Vec::new(),
+                        operations: Vec::new(),
                     },
                 );
                 i.try_into().unwrap()
@@ -67,8 +67,8 @@ impl FileBuffers {
 
 impl FileBuffer {
     pub fn write(&mut self, offset: i64, data: &[u8]) {
-        self.chunks.push(FileChunk {
-            data: data.to_vec(),
+        self.operations.push(Operation::Write {
+            data: data.to_vec().into_boxed_slice(),
             offset: offset.try_into().unwrap(),
         })
     }
@@ -78,27 +78,14 @@ impl FileBuffer {
         let Some(meta) = arh.get_file_info(&self.path).copied() else {
             // Likely deleted but didn't call `close`
             warn!(
-                "dangling file descriptor (forgot to close()?): {}",
+                "[flush] dangling file descriptor (forgot to close()?): {}",
                 self.path
             );
             return Ok(());
         };
         let mut buf = ard.reader.entry(&meta).read()?;
-        for chunk in self.chunks.drain(..) {
-            let FileChunk { data, offset } = chunk;
-            let mut offset = usize::try_from(offset)?;
-            let end = offset + data.len();
-            let max_len = buf.len();
-            if offset < max_len {
-                let first_area = &mut buf[offset..end.min(max_len)];
-                first_area.copy_from_slice(&data[..first_area.len()]);
-                offset += first_area.len();
-                if offset < end {
-                    buf.extend_from_slice(&data[offset..]);
-                }
-            } else {
-                buf.extend_from_slice(&data);
-            }
+        for op in self.operations.drain(..) {
+            op.run(&mut buf)?;
         }
         // TODO strategy
         ArdFileAllocator::new(arh, &mut ard.writer).replace_file(
@@ -108,6 +95,34 @@ impl FileBuffer {
         )?;
         // Make sure arh modifications get saved to disk
         ard.writer.get_mut().flush()?;
+        Ok(())
+    }
+
+    pub fn truncate(&mut self, new_size: u64) {
+        self.operations.push(Operation::Truncate { new_size });
+    }
+}
+
+impl Operation {
+    fn run(&self, buffer: &mut Vec<u8>) -> Result<()> {
+        match self {
+            Operation::Truncate { new_size } => buffer.resize(usize::try_from(*new_size)?, 0),
+            Operation::Write { offset, data } => {
+                let mut offset = usize::try_from(*offset)?;
+                let end = offset + data.len();
+                let max_len = buffer.len();
+                if offset < max_len {
+                    let first_area = &mut buffer[offset..end.min(max_len)];
+                    first_area.copy_from_slice(&data[..first_area.len()]);
+                    offset += first_area.len();
+                    if offset < end {
+                        buffer.extend_from_slice(&data[offset..]);
+                    }
+                } else {
+                    buffer.extend_from_slice(&data);
+                }
+            }
+        }
         Ok(())
     }
 }
