@@ -4,6 +4,25 @@ use std::{fmt::Display, ops::Deref};
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct ArhPath(String);
 
+impl ArhPath {
+    pub fn join(&self, child: &str) -> Self {
+        let mut new = self.clone();
+        new.append(child);
+        new
+    }
+
+    pub fn append(&mut self, child: &str) {
+        if self.0.as_bytes().last() != Some(&b'/') {
+            self.0.push('/');
+        }
+        if child.as_bytes().first() == Some(&b'/') {
+            self.0.push_str(&child[1..]);
+        } else {
+            self.0.push_str(child);
+        }
+    }
+}
+
 impl Default for ArhPath {
     fn default() -> Self {
         Self("/".to_string())

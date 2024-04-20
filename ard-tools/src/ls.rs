@@ -48,7 +48,7 @@ pub fn run(input: &InputData, args: ListArgs) -> Result<()> {
     for child in children {
         match child.entry {
             DirEntry::File => {
-                let file = fs.get_file_info(&format!("{wd}/{}", child.name)).unwrap();
+                let file = fs.get_file_info(&wd.join(&child.name)).unwrap();
                 let file_size = file.actual_size();
                 table.push_row::<Cow<_>>(vec![
                     child.name.as_str().into(),
