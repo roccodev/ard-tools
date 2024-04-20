@@ -168,12 +168,13 @@ impl ArhFuseSystem {
 impl Filesystem for ArhFuseSystem {
     fn statfs(&mut self, _req: &Request, _ino: u64, reply: ReplyStatfs) {
         let block_size = self.arh.block_size();
+        let max_size = u32::MAX.div_ceil(block_size) as u64;
         reply.statfs(
-            u64::MAX,
-            u64::MAX,
-            u64::MAX,
-            u64::MAX,
-            u64::MAX,
+            max_size,
+            max_size,
+            max_size,
+            max_size,
+            max_size,
             block_size,
             ARH_PATH_MAX_LEN.try_into().unwrap(),
             block_size,
