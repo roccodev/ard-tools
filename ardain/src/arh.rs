@@ -301,9 +301,20 @@ impl PathDictionary {
     /// moved to that block. At the end, the `next` value in `previous_node` is updated accordingly.
     pub fn allocate_new_block(&mut self, previous_node: i32) -> i32 {
         const BLOCK_SIZE: usize = 0x80;
-        let mut offset = self.nodes.len();
         // Offset should be the center point wrt XOR with a value in [0, BLOCK_SIZE-1]. In other words,
         // `offset ^ x` should be in [nodes.len(), nodes.len()+BLOCK_SIZE-1] for all x in [0, BLOCK_SIZE-1].
+        // We choose to align the block at BLOCK_SIZE so that this is always the case.
+        let mut offset = self.nodes.len();
+        if offset % BLOCK_SIZE != 0 {
+            let aligned = offset
+                .checked_next_multiple_of(BLOCK_SIZE)
+                .expect("path dict overflow");
+            while offset != aligned {
+                self.nodes.push(DictNode::Free);
+                offset += 1;
+            }
+        }
+
         self.nodes.reserve_exact(BLOCK_SIZE);
         for _ in 0..BLOCK_SIZE {
             self.nodes.push(DictNode::Free);

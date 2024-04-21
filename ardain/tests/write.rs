@@ -1,7 +1,4 @@
-use std::{
-    fs::File,
-    io::{BufReader, Cursor},
-};
+use std::{fs::File, io::Cursor};
 
 use ardain::{
     file_alloc::{ArdFileAllocator, CompressionStrategy},
@@ -13,8 +10,6 @@ use ardain::{
 fn read_write() {
     let ard_path = "tests/res/bf3_dlc04.ard";
     let mut arh = load_arh();
-    let mut ard_file = File::open(ard_path).unwrap();
-    let mut reader = ArdReader::new(BufReader::new(&mut ard_file));
 
     let mut buf = Cursor::new(std::fs::read(ard_path).unwrap());
     let mut writer = ArdWriter::new(&mut buf);

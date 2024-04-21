@@ -32,7 +32,7 @@ impl LibcError for Error {
         match self {
             Error::FsNoEntry => ENOENT,
             Error::FsAlreadyExists => EEXIST,
-            Error::FsFileNameExtended => EINVAL,
+            Error::FsFileNameExtended | Error::Path(_) => EINVAL,
             _ => EIO,
         }
     }
@@ -40,8 +40,7 @@ impl LibcError for Error {
     fn handle(&self) {
         match self {
             e @ Error::FsFileNameExtended => warn!("{e}"),
-            e if e.errno() == EIO => error!("{e}"),
-            _ => {}
+            e => error!("{e}"),
         }
     }
 }

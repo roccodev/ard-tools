@@ -148,7 +148,9 @@ impl ArhFileSystem {
 
             while !cur.1.is_leaf() {
                 if path.is_empty() {
-                    unreachable!("should have been reported as existing file");
+                    // Whole `path` consumed but there are still nodes to traverse.
+                    // This means that there is another file with a name that extends it.
+                    return Err(Error::FsFileNameExtended);
                 }
                 let next = cur.1.next_after_chr(path.as_bytes()[0]) as usize;
                 if !nodes[next].is_child(cur.0 as i32) {
@@ -282,6 +284,8 @@ impl ArhFileSystem {
 
         // Probably not optimal (we potentially leave unused nodes dangling),
         // but we can just free the leaf node
+        // TODO: this is actually not sufficient. Create files "ab", "ac", "ad", then remove
+        // all 3. Then file "a" cannot be created because the common node was not freed
         *self.arh.path_dictionary_mut().node_mut(leaf_id) = DictNode::Free;
 
         // For the file entry, it's not as simple as it looks. While FileMeta has an ID field,
