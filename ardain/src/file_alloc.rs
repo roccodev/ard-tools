@@ -18,8 +18,8 @@ pub struct ArdFileAllocator<'a, 'w, W> {
 pub enum CompressionStrategy {
     /// Never compress entries.
     None,
-    /// Use the default compression algorithm the game supports.
-    Standard,
+    /// Use the chosen compression algorithm.
+    Standard(CompressionType),
     /// Compress using all available methods, then pick the smallest result.
     Best,
 }
@@ -30,7 +30,7 @@ enum EntryFile<'a> {
     /// Stored uncompressed, but within a XBC1 structure
     RawWrapped(&'a [u8]),
     /// Compressed and wrapped in a XBC1 structure
-    Compressed(Box<[u8]>, CompressionMeta),
+    Compressed(Xbc1),
 }
 
 struct CompressionMeta {
@@ -64,7 +64,7 @@ impl<'a, 'w, W: Write + Seek> ArdFileAllocator<'a, 'w, W> {
             .file_table
             .get_meta_mut(file_id)
             .expect("file not found");
-        let data = Self::compress_data(data, strategy);
+        let data = Self::compress_data(data, strategy)?;
         let total_len: u64 = data.size_on_disk().try_into().unwrap();
         let offset = self.block_table.find_free_space(total_len);
         data.write(self.writer.entry(offset)?)?;
@@ -86,7 +86,7 @@ impl<'a, 'w, W: Write + Seek> ArdFileAllocator<'a, 'w, W> {
             .file_table
             .get_meta_mut(file_id)
             .expect("file not found");
-        let data = Self::compress_data(new_data, strategy);
+        let data = Self::compress_data(new_data, strategy)?;
         if data.size_on_disk() <= file.compressed_size.try_into().unwrap() {
             // If it fits, just write and update size
             data.write(self.writer.entry(file.offset)?)?;
@@ -104,9 +104,29 @@ impl<'a, 'w, W: Write + Seek> ArdFileAllocator<'a, 'w, W> {
         Ok(())
     }
 
-    fn compress_data(data: &[u8], strategy: CompressionStrategy) -> EntryFile {
-        // TODO: actually compress
-        EntryFile::Raw(data)
+    fn compress_data(data: &[u8], strategy: CompressionStrategy) -> Result<EntryFile> {
+        if let CompressionStrategy::None = strategy {
+            return Ok(EntryFile::Raw(data));
+        }
+        let compressed = Xbc1::from_decompressed(
+            String::new(),
+            data,
+            match strategy {
+                CompressionStrategy::Standard(ty) => ty,
+                _ => CompressionType::Zlib,
+            },
+        )?;
+        Ok(match strategy {
+            CompressionStrategy::None => EntryFile::Raw(data),
+            CompressionStrategy::Standard(_) => EntryFile::Compressed(compressed),
+            CompressionStrategy::Best => {
+                if data.len() < compressed.compressed_stream.len() + 0x30 {
+                    EntryFile::Raw(data)
+                } else {
+                    EntryFile::Compressed(compressed)
+                }
+            }
+        })
     }
 
     fn update_meta(
@@ -119,7 +139,7 @@ impl<'a, 'w, W: Write + Seek> ArdFileAllocator<'a, 'w, W> {
         let (has_xbc1, unc_size) = match data {
             EntryFile::Raw(_) => (false, 0),
             EntryFile::RawWrapped(_) => (true, 0),
-            EntryFile::Compressed(_, meta) => (true, meta.uncompressed_len),
+            EntryFile::Compressed(xbc1) => (true, xbc1.decompressed_size),
         };
         meta.set_flag(FileFlag::HasXbc1Header, has_xbc1);
         meta.uncompressed_size = unc_size;
@@ -139,14 +159,7 @@ impl<'a> EntryFile<'a> {
                 Xbc1::from_decompressed(String::new(), data, CompressionType::Uncompressed)
                     .expect("TODO")
             }
-            EntryFile::Compressed(data, meta) => Xbc1 {
-                compression_type: meta.compression_type,
-                decompressed_size: meta.uncompressed_len,
-                compressed_size: data.len().try_into().unwrap(),
-                decompressed_hash: meta.crc_hash,
-                name: String::new(),
-                compressed_stream: data.to_vec(),
-            },
+            EntryFile::Compressed(xbc1) => xbc1.clone(),
             EntryFile::Raw(_) => unreachable!(),
         };
         xbc1.write(&mut writer)?;
@@ -157,7 +170,7 @@ impl<'a> EntryFile<'a> {
         match self {
             EntryFile::Raw(data) => data.len(),
             EntryFile::RawWrapped(data) => data.len() + 0x30,
-            EntryFile::Compressed(data, _) => data.len() + 0x30,
+            EntryFile::Compressed(xbc1) => xbc1.compressed_stream.len() + 0x30,
         }
     }
 
@@ -165,7 +178,7 @@ impl<'a> EntryFile<'a> {
         match self {
             EntryFile::Raw(buf) => buf,
             EntryFile::RawWrapped(buf) => buf,
-            EntryFile::Compressed(buf, _) => buf,
+            EntryFile::Compressed(xbc1) => &xbc1.compressed_stream,
         }
     }
 }

@@ -88,11 +88,11 @@ impl FileBuffer {
         for op in self.operations.drain(..) {
             op.run(&mut buf)?;
         }
-        // TODO strategy
+        // TODO make strategy configurable
         ArdFileAllocator::new(arh, &mut ard.writer).replace_file(
             meta.id,
             &buf,
-            CompressionStrategy::None,
+            CompressionStrategy::Best,
         )?;
         // Make sure arh modifications get saved to disk
         ard.writer.get_mut().flush()?;

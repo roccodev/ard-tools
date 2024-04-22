@@ -5,6 +5,7 @@ use ardain::{
     path::ArhPath,
     ArdReader, ArdWriter, ArhFileSystem,
 };
+use xc3_lib::xbc1::CompressionType;
 
 #[test]
 fn read_write() {
@@ -21,13 +22,17 @@ fn read_write() {
     let new_file = arh.create_file(&new_path).unwrap().id;
     let mut allocator = ArdFileAllocator::new(&mut arh, &mut writer);
     allocator
-        .write_new_file(new_file, &[0, 1, 2, 3, 4, 5], CompressionStrategy::None)
+        .write_new_file(
+            new_file,
+            &[0, 1, 2, 3, 4, 5],
+            CompressionStrategy::Standard(CompressionType::Zlib),
+        )
         .unwrap();
     allocator
         .replace_file(
             btl_bdat,
             &[100, 101, 102, 103, 104, 105],
-            CompressionStrategy::None,
+            CompressionStrategy::Standard(CompressionType::Zstd),
         )
         .unwrap();
 

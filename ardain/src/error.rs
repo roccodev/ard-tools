@@ -1,6 +1,6 @@
 use std::{io, num::TryFromIntError};
 
-use xc3_lib::error::DecompressStreamError;
+use xc3_lib::{error::DecompressStreamError, xbc1::CreateXbc1Error};
 
 use crate::path::InvalidPathError;
 
@@ -24,4 +24,12 @@ pub enum Error {
     FsAlreadyExists,
     #[error("FS: extended file names are not supported (e.g. \"a.tar\", \"a.tar.gz\")")]
     FsFileNameExtended,
+}
+
+impl From<CreateXbc1Error> for Error {
+    fn from(value: CreateXbc1Error) -> Self {
+        match value {
+            CreateXbc1Error::Io(e) => Self::Io(e),
+        }
+    }
 }
