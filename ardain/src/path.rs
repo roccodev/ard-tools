@@ -16,6 +16,7 @@ pub struct ArhPath(Cow<'static, str>);
 #[error("invalid path {path}: {desc}")]
 pub struct InvalidPathError {
     path: String,
+    #[source]
     desc: PathErrorDesc,
 }
 
