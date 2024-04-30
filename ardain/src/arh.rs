@@ -256,6 +256,8 @@ impl StringTable {
 }
 
 impl PathDictionary {
+    const BLOCK_SIZE: usize = 0x80;
+
     pub fn get_full_path(&self, mut node_idx: usize, strings: &StringTable) -> String {
         let mut node = &self.nodes[node_idx];
 
@@ -300,14 +302,13 @@ impl PathDictionary {
     /// * `previous_node`: the parent node. A new block is allocated and all its children are
     /// moved to that block. At the end, the `next` value in `previous_node` is updated accordingly.
     pub fn allocate_new_block(&mut self, previous_node: i32) -> i32 {
-        const BLOCK_SIZE: usize = 0x80;
         // Offset should be the center point wrt XOR with a value in [0, BLOCK_SIZE-1]. In other words,
         // `offset ^ x` should be in [nodes.len(), nodes.len()+BLOCK_SIZE-1] for all x in [0, BLOCK_SIZE-1].
         // We choose to align the block at BLOCK_SIZE so that this is always the case.
         let mut offset = self.nodes.len();
-        if offset % BLOCK_SIZE != 0 {
+        if offset % Self::BLOCK_SIZE != 0 {
             let aligned = offset
-                .checked_next_multiple_of(BLOCK_SIZE)
+                .checked_next_multiple_of(Self::BLOCK_SIZE)
                 .expect("path dict overflow");
             while offset != aligned {
                 self.nodes.push(DictNode::Free);
@@ -315,14 +316,14 @@ impl PathDictionary {
             }
         }
 
-        self.nodes.reserve_exact(BLOCK_SIZE);
-        for _ in 0..BLOCK_SIZE {
+        self.nodes.reserve_exact(Self::BLOCK_SIZE);
+        for _ in 0..Self::BLOCK_SIZE {
             self.nodes.push(DictNode::Free);
         }
 
         // Copy old block.
         if let Some(next) = self.nodes[previous_node as usize].get_next() {
-            for c in 0..BLOCK_SIZE as i32 {
+            for c in 0..Self::BLOCK_SIZE as i32 {
                 // Select the characters that are actually children
                 let Some(node) = (next ^ c)
                     .try_into()
@@ -346,7 +347,7 @@ impl PathDictionary {
                 // grandchild must match the child's index)
                 if let Some(next) = node.get_next() {
                     // Again, find the characters that make grandchild nodes
-                    for c in 0..BLOCK_SIZE as i32 {
+                    for c in 0..Self::BLOCK_SIZE as i32 {
                         if let Some(node) = (next ^ c)
                             .try_into()
                             .ok()
@@ -368,6 +369,32 @@ impl PathDictionary {
         // At the end, fix back links for source node (see function docs)
         self.nodes[previous_node as usize].attach_next(offset as i32);
         offset as i32
+    }
+
+    /// Marks a node as free, recursively marking parent nodes as free if they have no children.
+    ///
+    /// ## Panics
+    /// Panics if `index` points to an invalid node.
+    pub fn free_node_recursive(&mut self, index: i32) {
+        let mut index = index;
+        loop {
+            let node = *self.node(index);
+            *self.node_mut(index) = DictNode::Free;
+            if let Some(previous) = node.get_previous() {
+                // Check if the parent has no children left
+                for child in 0..Self::BLOCK_SIZE as i32 {
+                    if self
+                        .get_node(index ^ child)
+                        .is_some_and(|c| c.is_child(previous))
+                    {
+                        return;
+                    }
+                }
+                index = previous;
+                continue;
+            }
+            return;
+        }
     }
 }
 

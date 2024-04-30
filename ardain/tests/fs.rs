@@ -110,6 +110,19 @@ fn delete_files() {
 }
 
 #[test]
+fn create_all_delete_recursive() {
+    let mut arh = load_arh();
+    let create = ["ab", "ac", "ad"].map(|s| ArhPath::normalize(s).unwrap());
+    for f in &create {
+        arh.create_file(f).unwrap();
+    }
+    for f in &create {
+        arh.delete_file(f).unwrap();
+    }
+    arh.create_file(&ArhPath::normalize("a").unwrap()).unwrap();
+}
+
+#[test]
 fn rename_files() {
     let mut arh = load_arh();
     let files = [

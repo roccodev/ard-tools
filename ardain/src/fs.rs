@@ -282,11 +282,10 @@ impl ArhFileSystem {
     pub fn delete_file(&mut self, path: &ArhPath) -> Result<()> {
         let (file_id, leaf_id) = self.get_file_id(path).ok_or(Error::FsNoEntry)?;
 
-        // Probably not optimal (we potentially leave unused nodes dangling),
-        // but we can just free the leaf node
-        // TODO: this is actually not sufficient. Create files "ab", "ac", "ad", then remove
-        // all 3. Then file "a" cannot be created because the common node was not freed
-        *self.arh.path_dictionary_mut().node_mut(leaf_id) = DictNode::Free;
+        // We must recursively free nodes. Consider this scenario:
+        // Files "ab", "ac", "ad" are created, then removed. If nodes are not freed
+        // recursively, then file "a" cannot be created because the common node was not freed
+        self.arh.path_dictionary_mut().free_node_recursive(leaf_id);
 
         // For the file entry, it's not as simple as it looks. While FileMeta has an ID field,
         // the game actually indexes into the file table instead of filtering by that field.
