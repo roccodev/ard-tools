@@ -145,7 +145,7 @@ impl ArhFuseSystem {
         FileAttr {
             ino: inode,
             size: sz,
-            blocks: 0,
+            blocks: sz.div_ceil(self.arh.block_size().into()),
             atime: UNIX_EPOCH,
             mtime: UNIX_EPOCH,
             ctime: UNIX_EPOCH,
