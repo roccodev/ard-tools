@@ -7,6 +7,7 @@ use anyhow::{anyhow, Result};
 use ardain::{path::ArhPath, ArhFileSystem};
 use clap::{command, Args, Parser, Subcommand};
 
+mod extract;
 mod ls;
 mod rm;
 
@@ -47,6 +48,8 @@ enum Commands {
     /// Remove files or directories
     #[clap(visible_alias = "rm")]
     Remove(rm::RemoveArgs),
+    #[clap(visible_alias = "x")]
+    Extract(extract::ExtractArgs),
 }
 
 fn main() -> Result<()> {
@@ -55,6 +58,7 @@ fn main() -> Result<()> {
     match cli.command {
         Some(Commands::List(args)) => ls::run(&cli.input, args),
         Some(Commands::Remove(args)) => rm::run(&cli.input, args),
+        Some(Commands::Extract(args)) => extract::run(&cli.input, args),
         _ => Ok(()),
     }
 }
@@ -71,6 +75,13 @@ impl InputData {
         match self.out_arh.as_ref().or(self.in_arh.as_ref()) {
             Some(path) => Ok(fs.sync(BufWriter::new(File::create(path)?))?),
             None => Err(anyhow!("input .arh must be passed in as --arh")),
+        }
+    }
+
+    pub fn ard_file(&self) -> Result<File> {
+        match &self.in_ard {
+            Some(path) => Ok(File::open(path)?),
+            None => Err(anyhow!("input .ard must be passed in as --ard")),
         }
     }
 }
