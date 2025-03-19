@@ -1,4 +1,7 @@
-# ARH file format
+# ARH1 file format
+
+**Note**: This documents the ARH1 format, used in Xenoblade 2, DE, and 3. Xenoblade X DE uses a
+newer version of the format, documented [here](arh2.md).
 
 ARH files accompany ARD files and define the structure for the latter's internal file system.
 

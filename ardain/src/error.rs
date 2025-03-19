@@ -22,8 +22,10 @@ pub enum Error {
     FsNoEntry,
     #[error("FS: an entry already exists with this name")]
     FsAlreadyExists,
-    #[error("FS: extended file names are not supported (e.g. \"a.tar\", \"a.tar.gz\")")]
+    #[error("FS (ARH1): extended file names are not supported (e.g. \"a.tar\", \"a.tar.gz\")")]
     FsFileNameExtended,
+    #[error("FS: part of the file name is not available for use")]
+    FsReservedName,
 }
 
 impl From<CreateXbc1Error> for Error {

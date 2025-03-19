@@ -6,7 +6,7 @@ use std::{
 };
 
 use anyhow::{bail, Context, Result};
-use ardain::{path::ArhPath, ArdReader, FileMeta};
+use ardain::{path::ArhPath, ArdReader, FileEntry};
 use clap::Args;
 use indicatif::{ProgressBar, ProgressStyle};
 use rayon::{
@@ -18,8 +18,11 @@ use crate::InputData;
 
 #[derive(Args)]
 pub struct ExtractArgs {
+    /// Output directory for extraction
     #[arg(long = "out", short)]
     out_dir: String,
+    /// Paths in the filesystem to extract from. If no paths are passed in, the root directory
+    /// is extracted.
     #[arg(value_parser = crate::parse_path)]
     from_paths: Vec<ArhPath>,
 }
@@ -29,9 +32,13 @@ enum ArdAccess<'b> {
     Mem(&'b [u8]),
 }
 
-pub fn run(input: &InputData, args: ExtractArgs) -> Result<()> {
+pub fn run(input: &InputData, mut args: ExtractArgs) -> Result<()> {
     let fs = input.load_fs()?;
     let root_out = Path::new(&args.out_dir);
+
+    if args.from_paths.is_empty() {
+        args.from_paths.push(ArhPath::default());
+    }
 
     // Extraction steps:
     // 1. Collect path skeleton
@@ -50,7 +57,7 @@ pub fn run(input: &InputData, args: ExtractArgs) -> Result<()> {
     }
 
     // Sort paths by offset, leads to better access patterns for the underlying ARD file
-    arh_paths.sort_by_cached_key(|path| fs.get_file_info(path).unwrap().offset);
+    arh_paths.sort_by_cached_key(|path| fs.get_file_info(path).unwrap().ard_offset);
 
     // Extract files
     let start = Instant::now();
@@ -84,7 +91,7 @@ pub fn run(input: &InputData, args: ExtractArgs) -> Result<()> {
         let mut ard_file = &thread_fds[current_thread_index().unwrap()];
         ard_file.rewind()?;
         ArdAccess::File(ard_file.try_clone()?)
-            .copy_to(&out_path, file)
+            .copy_to(&out_path, &file)
             .with_context(|| format!("failed to extract {path}"))?;
         progress.inc(1);
         Ok::<(), anyhow::Error>(())
@@ -97,7 +104,7 @@ pub fn run(input: &InputData, args: ExtractArgs) -> Result<()> {
 }
 
 impl<'b> ArdAccess<'b> {
-    fn copy_to(&self, out_path: &Path, file: &FileMeta) -> Result<()> {
+    fn copy_to(&self, out_path: &Path, file: &FileEntry) -> Result<()> {
         // Here one alternative for uncompressed files could be to use sendfile(2) between the
         // ard and output fds
         let buf = match self {

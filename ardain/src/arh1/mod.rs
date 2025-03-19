@@ -4,18 +4,18 @@ use std::{
     mem::size_of,
 };
 
+use crate::opts::ArhOptions;
 use binrw::{BinRead, BinWrite};
+use ext::{ArhExtOffsets, ArhExtSection, FileRecycleBin};
 
-use crate::{
-    arh_ext::{ArhExtOffsets, ArhExtSection, FileRecycleBin},
-    opts::ArhOptions,
-};
+pub(crate) mod ext;
+mod fs;
 
 const KEY_XOR: u32 = 0xF3F35353;
 
 #[derive(Debug, Clone, BinRead, BinWrite)]
 #[brw(little, magic(b"arh1"))]
-pub struct Arh {
+pub struct Arh1 {
     _str_table_len_dup: u32,
     offsets: ArhOffsets,
     key: u32,
@@ -80,7 +80,7 @@ pub struct PathDictionary {
 #[br(import { len: u32 })]
 pub struct FileTable {
     #[br(args { count: usize::try_from(len).unwrap() })]
-    files: Vec<FileMeta>,
+    files: Vec<Arh1Entry>,
 }
 
 #[derive(Debug, PartialEq, Eq, Clone, Copy, BinRead, BinWrite)]
@@ -104,11 +104,11 @@ pub struct RawDictNode {
 }
 
 #[derive(Debug, Default, PartialEq, Clone, Copy, BinRead, BinWrite)]
-pub struct FileMeta {
+pub struct Arh1Entry {
     pub offset: u64,
     pub compressed_size: u32,
     pub uncompressed_size: u32,
-    flags: u32,
+    pub flags: u32,
     pub id: u32,
 }
 
@@ -123,7 +123,7 @@ pub enum FileFlag {
     HasXbc1Header = 1,
 }
 
-impl Arh {
+impl Arh1 {
     pub fn strings(&self) -> &StringTable {
         &self.encrypted.string_table
     }
@@ -140,7 +140,7 @@ impl Arh {
         &mut self.encrypted.path_dict
     }
 
-    pub(crate) fn prepare_for_write(&mut self) {
+    pub(crate) fn prepare_write(&mut self) {
         // We don't re-encrypt
         self.key = KEY_XOR;
 
@@ -399,13 +399,13 @@ impl PathDictionary {
 }
 
 impl FileTable {
-    pub fn get_meta(&self, file_id: u32) -> Option<&FileMeta> {
+    pub fn get_meta(&self, file_id: u32) -> Option<&Arh1Entry> {
         usize::try_from(file_id)
             .ok()
             .and_then(|id| self.files.get(id))
     }
 
-    pub fn get_meta_mut(&mut self, file_id: u32) -> Option<&mut FileMeta> {
+    pub fn get_meta_mut(&mut self, file_id: u32) -> Option<&mut Arh1Entry> {
         usize::try_from(file_id)
             .ok()
             .and_then(|id| self.files.get_mut(id))
@@ -413,7 +413,7 @@ impl FileTable {
 
     pub fn push_entry(
         &mut self,
-        mut meta: FileMeta,
+        mut meta: Arh1Entry,
         recycle_bin: Option<&mut FileRecycleBin>,
     ) -> u32 {
         if let Some(id) = recycle_bin.and_then(FileRecycleBin::pop) {
@@ -427,11 +427,11 @@ impl FileTable {
         id
     }
 
-    pub fn delete_entry(&mut self, file_id: u32) -> Option<FileMeta> {
+    pub fn delete_entry(&mut self, file_id: u32) -> Option<Arh1Entry> {
         self.files.get_mut(file_id as usize).map(std::mem::take)
     }
 
-    pub fn files(&self) -> &[FileMeta] {
+    pub fn files(&self) -> &[Arh1Entry] {
         &self.files
     }
 }
@@ -506,7 +506,7 @@ impl DictNode {
     }
 }
 
-impl FileMeta {
+impl Arh1Entry {
     pub(crate) fn new_invalid() -> Self {
         Self {
             offset: 0,
@@ -525,19 +525,6 @@ impl FileMeta {
             uncompressed_size: 0,
             flags: 0,
             id: 0,
-        }
-    }
-
-    /// Returns the file's size after being extracted from the archive.
-    ///
-    /// For files that are stored uncompressed, the game expects `uncompressed_size` to be 0,
-    /// which can be confusing. This method always returns a non-zero size. (except for actually
-    /// empty files)
-    pub fn actual_size(&self) -> u32 {
-        if self.uncompressed_size != 0 {
-            self.uncompressed_size
-        } else {
-            self.compressed_size
         }
     }
 

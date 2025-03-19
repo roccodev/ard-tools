@@ -1,9 +1,9 @@
 use std::io::{Read, Seek, SeekFrom, Write};
 
-use xc3_lib::xbc1::Xbc1;
+use xc3_lib::xbc1::{CompressionType, Xbc1};
 
 use crate::error::Result;
-use crate::FileMeta;
+use crate::FileEntry;
 
 /// Provides easy access to entries in an ARD file.
 pub struct ArdReader<R> {
@@ -35,12 +35,12 @@ impl<R: Read + Seek> ArdReader<R> {
     /// Returns a handle that can read a file entry.
     ///
     /// The file will be transparently decompressed if needed.
-    pub fn entry(&mut self, file: &FileMeta) -> EntryReader<&mut R> {
+    pub fn entry(&mut self, file: &FileEntry) -> EntryReader<&mut R> {
         EntryReader {
             reader: &mut self.reader,
-            offset: file.offset,
-            compressed: file.uncompressed_size != 0,
-            entry_size: file.compressed_size.into(),
+            offset: file.ard_offset,
+            compressed: file.expanded_size.is_some(),
+            entry_size: file.ard_size,
         }
     }
 }
@@ -83,7 +83,17 @@ impl<R: Read + Seek> EntryReader<R> {
         self.reader.seek(SeekFrom::Start(self.offset))?;
         if self.compressed {
             let xbc1 = Xbc1::read(&mut self.reader)?;
-            let buf = xbc1.decompress()?;
+            let buf = match xbc1.decompress() {
+                Ok(buf) => buf,
+                Err(xc3_lib::error::DecompressStreamError::Checksum(buf))
+                    if xbc1.decompressed_hash == 0
+                        && xbc1.compression_type == CompressionType::Zstd =>
+                {
+                    // XCXDE doesn't have a checksum for zstd files
+                    buf
+                }
+                Err(e) => return Err(e.into()),
+            };
             let end = offset_in_entry
                 .saturating_add(max_size)
                 .min(xbc1.decompressed_size.into());

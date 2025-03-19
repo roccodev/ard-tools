@@ -4,7 +4,7 @@ use std::mem::size_of;
 
 use binrw::{BinRead, BinWrite};
 
-use crate::{arh::Arh, FileMeta};
+use crate::arh1::{Arh1, Arh1Entry};
 
 pub const BLOCK_SIZE_POW_DEFAULT: u16 = 9; // 512-byte blocks
 
@@ -42,7 +42,7 @@ pub struct FileRecycleBin {
 }
 
 impl ArhExtSection {
-    pub fn new(arh: &Arh, block_size: u16) -> Self {
+    pub fn new(arh: &Arh1, block_size: u16) -> Self {
         Self {
             allocated_blocks: BlockAllocTable::new(arh, block_size),
             file_meta_recycle_bin: FileRecycleBin::default(),
@@ -68,7 +68,7 @@ impl ArhExtSection {
 }
 
 impl BlockAllocTable {
-    fn new(arh: &Arh, block_size_pow: u16) -> Self {
+    fn new(arh: &Arh1, block_size_pow: u16) -> Self {
         let mut res = Self {
             block_size_pow,
             block_arr_count: 0,
@@ -90,7 +90,7 @@ impl BlockAllocTable {
 
     /// Treats the area occupied by `old_file` as empty, and returns the starting offset for an
     /// area with at least `desired_size` free bytes.
-    pub fn find_space_replace(&self, old_file: &FileMeta, desired_size: u64) -> u64 {
+    pub fn find_space_replace(&self, old_file: &Arh1Entry, desired_size: u64) -> u64 {
         if old_file.compressed_size == 0 {
             return self.find_free_space(desired_size);
         }
@@ -183,7 +183,7 @@ impl BlockAllocTable {
         first_free_block * (1 << self.block_size_pow)
     }
 
-    pub fn mark(&mut self, file: &FileMeta, occupied: bool) {
+    pub fn mark(&mut self, file: &Arh1Entry, occupied: bool) {
         if file.compressed_size == 0 {
             return;
         }
@@ -243,7 +243,7 @@ impl FileRecycleBin {
 
 #[cfg(test)]
 mod tests {
-    use crate::FileMeta;
+    use crate::arh1::Arh1Entry;
 
     use super::BlockAllocTable;
 
@@ -292,7 +292,7 @@ mod tests {
 
     #[test]
     fn block_table_find_replace() {
-        let file = FileMeta::new_for_test(60 * BLOCK_SIZE, 68 * BLOCK_SIZE as u32);
+        let file = Arh1Entry::new_for_test(60 * BLOCK_SIZE, 68 * BLOCK_SIZE as u32);
         let table = BlockAllocTable {
             block_size_pow: BLOCK_POW,
             block_arr_count: 0,
