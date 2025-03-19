@@ -1,4 +1,4 @@
-use crate::arh_ext;
+use crate::{arh1, arh2::hash::Arh2NameTable};
 
 #[derive(Clone)]
 pub struct ArhOptions {
@@ -7,20 +7,22 @@ pub struct ArhOptions {
     /// Lower values result in higher space efficiency in the ARD file (especially if there
     /// are many small files), but also increase the size of the ARH file.
     ///
-    /// Defaults to [`arh_ext::BLOCK_SIZE_POW_DEFAULT`]
+    /// Defaults to [`arh1::ext::BLOCK_SIZE_POW_DEFAULT`]
     pub ext_block_size_pow: u16,
     /// If `true`, when loading a file with an existing block table, the table will be
     /// regenerated if its block size is different than `ext_block_size_pow`.
     ///
     /// Defaults to `false`
     pub ext_force_block_size: bool,
+    pub arh2_name_table: Arh2NameTable,
 }
 
 impl Default for ArhOptions {
     fn default() -> Self {
         Self {
-            ext_block_size_pow: arh_ext::BLOCK_SIZE_POW_DEFAULT,
+            ext_block_size_pow: arh1::ext::BLOCK_SIZE_POW_DEFAULT,
             ext_force_block_size: false,
+            arh2_name_table: Default::default(),
         }
     }
 }

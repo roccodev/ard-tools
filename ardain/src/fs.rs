@@ -1,24 +1,48 @@
 use std::{
+    any::Any,
     collections::VecDeque,
     io::{Read, Seek, Write},
+    num::NonZeroU64,
 };
 
-use binrw::{BinRead, BinResult, BinWrite};
+use binrw::{BinRead, BinWrite};
 
 use crate::{
-    arh::{Arh, DictNode, FileMeta},
-    arh_ext::ArhExtSection,
+    arh1::Arh1,
+    arh2::Arh2,
+    compat::{CompatArh, CompatArhDyn},
     error::{Error, Result},
     opts::ArhOptions,
     path::ArhPath,
+    FileFlag,
 };
 
-pub struct ArhFileSystem {
-    pub(crate) arh: Arh,
+pub struct ArhFileSystem<A> {
+    pub(crate) arh_new: A,
     pub(crate) opts: ArhOptions,
     // Not part of the ARH format, but we keep one to make enumerating and traversing directories
     // easier.
     dir_tree: DirNode,
+}
+
+pub type ArhCompatFileSystem = ArhFileSystem<CompatArhDyn>;
+pub type Arh1FileSystem = ArhFileSystem<Arh1>;
+pub type Arh2FileSystem = ArhFileSystem<Arh2>;
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct FileEntry {
+    /// The offset of the file in the ARD
+    pub ard_offset: u64,
+    /// The size of the file, in terms of space occupied in the ARD
+    pub ard_size: u64,
+    /// If the file is compressed, this is the uncompressed file size
+    pub expanded_size: Option<NonZeroU64>,
+    /// An ID unique to the file path
+    pub unique_id: u64,
+
+    // Flags
+    pub(crate) xbc1_header: bool,
+    pub(crate) hidden: bool,
 }
 
 #[derive(Debug)]
@@ -33,20 +57,109 @@ pub enum DirEntry {
     Directory { children: Vec<DirNode> },
 }
 
-impl ArhFileSystem {
-    pub fn load(reader: impl Read + Seek) -> BinResult<Self> {
+pub(crate) mod private {
+    use super::{DirNode, FileEntry};
+    use crate::{
+        compat::{CompatArh, CompatArhRef},
+        error::Result,
+        opts::ArhOptions,
+        path::ArhPath,
+    };
+
+    pub trait ArhAccessPrivate {
+        fn post_read(&mut self);
+        fn get_file_entry(&self, path: &ArhPath) -> Option<FileEntry>;
+        fn init_dir_tree(&self, opts: &ArhOptions) -> DirNode;
+
+        fn create_file(&mut self, path: &ArhPath) -> Result<FileEntry>;
+        fn delete_file(&mut self, path: &ArhPath, opts: &ArhOptions) -> Result<()>;
+        fn hide_file(&mut self, path: &ArhPath, hidden: bool) -> Result<()>;
+        fn rename_file(
+            &mut self,
+            from: &ArhPath,
+            to: &ArhPath,
+            opts: &ArhOptions,
+            dir_tree: &mut DirNode,
+        ) -> Result<()>;
+        fn prepare_for_write(&mut self);
+
+        fn into_compat(self: Box<Self>) -> CompatArh;
+        fn as_compat(&self) -> CompatArhRef;
+    }
+}
+
+pub trait ArhAccess: private::ArhAccessPrivate {}
+
+impl<A: ArhAccess + BinRead> ArhFileSystem<A>
+where
+    for<'a> <A as BinRead>::Args<'a>: Default,
+{
+    pub fn load(reader: impl Read + Seek) -> Result<Self> {
         Self::load_with_options(reader, ArhOptions::default())
     }
 
-    pub fn load_with_options(mut reader: impl Read + Seek, options: ArhOptions) -> BinResult<Self> {
-        let arh = Arh::read(&mut reader)?;
+    pub fn load_with_options(mut reader: impl Read + Seek, options: ArhOptions) -> Result<Self> {
+        let mut arh = A::read_le(&mut reader)?;
+        arh.post_read();
         Ok(Self {
-            dir_tree: DirNode::build(&arh),
+            dir_tree: arh.init_dir_tree(&options),
             opts: options,
-            arh,
+            arh_new: arh,
         })
     }
 
+    pub fn into_compat(self) -> ArhCompatFileSystem
+    where
+        A: Send + Sync + 'static,
+    {
+        ArhFileSystem {
+            dir_tree: self.dir_tree,
+            opts: self.opts,
+            arh_new: Box::new(self.arh_new),
+        }
+    }
+}
+
+impl ArhFileSystem<CompatArhDyn> {
+    pub fn load(reader: impl Read + Seek) -> Result<Self> {
+        Self::load_with_options(reader, ArhOptions::default())
+    }
+
+    pub fn load_with_options(mut reader: impl Read + Seek, options: ArhOptions) -> Result<Self> {
+        let mut arh = CompatArh::read_le(&mut reader)?.erase();
+        arh.post_read();
+        Ok(Self {
+            dir_tree: arh.init_dir_tree(&options),
+            opts: options,
+            arh_new: arh,
+        })
+    }
+
+    pub fn into_v1(self) -> std::result::Result<Arh1FileSystem, Self> {
+        self.into_versioned::<Arh1>()
+    }
+
+    pub fn into_v2(self) -> std::result::Result<Arh2FileSystem, Self> {
+        self.into_versioned::<Arh2>()
+    }
+
+    fn into_versioned<A: ArhAccess + 'static>(self) -> std::result::Result<ArhFileSystem<A>, Self> {
+        match self.arh_new.into_compat().into_inner::<A>() {
+            Ok(versioned) => Ok(ArhFileSystem {
+                dir_tree: self.dir_tree,
+                opts: self.opts,
+                arh_new: versioned,
+            }),
+            Err(old) => Err(ArhFileSystem {
+                dir_tree: self.dir_tree,
+                opts: self.opts,
+                arh_new: old,
+            }),
+        }
+    }
+}
+
+impl<A: ArhAccess> ArhFileSystem<A> {
     /// Returns the size of a single block, in bytes.
     ///
     /// This can be changed by loading the file system using [`Self::load_with_options`].
@@ -68,14 +181,8 @@ impl ArhFileSystem {
         self.is_dir(path) || self.is_file(path)
     }
 
-    pub fn get_file_info(&self, path: &ArhPath) -> Option<&FileMeta> {
-        self.get_file_id(path)
-            .and_then(|(id, _)| self.arh.file_table.get_meta(id))
-    }
-
-    pub fn get_file_info_mut(&mut self, path: &ArhPath) -> Option<&mut FileMeta> {
-        self.get_file_id(path)
-            .and_then(|(id, _)| self.arh.file_table.get_meta_mut(id))
+    pub fn get_file_info(&self, path: &ArhPath) -> Option<FileEntry> {
+        self.arh_new.get_file_entry(path)
     }
 
     pub fn get_dir(&self, path: &ArhPath) -> Option<&DirNode> {
@@ -101,204 +208,25 @@ impl ArhFileSystem {
         matches!(node.entry, DirEntry::Directory { .. }).then_some(node)
     }
 
-    /// Returns the file ID and leaf node ID for the given path.
-    fn get_file_id(&self, path: &ArhPath) -> Option<(u32, i32)> {
-        let nodes = &self.arh.path_dictionary();
-        let mut cur = (0, nodes.node(0));
-        let mut path = path.as_str();
-
-        while !cur.1.is_leaf() {
-            if path.is_empty() {
-                // If we've consumed the whole path, the file exists iff there are no more
-                // nodes to be visited.
-                if cur.1.is_child(cur.0) {
-                    break;
-                }
-                return None;
-            }
-            let next_id = cur.1.next_after_chr(path.as_bytes()[0]);
-            let next = nodes.get_node(next_id)?;
-            if !next.is_child(cur.0) {
-                return None;
-            }
-            cur = (next_id, next);
-            path = &path[1..];
-        }
-        let DictNode::Leaf { string_offset, .. } = *cur.1 else {
-            return None;
-        };
-        let (remaining, file_id) = self.arh.strings().get_str_part_id(string_offset as usize);
-
-        (remaining == path).then_some((file_id, cur.0))
-    }
-
     // Structural modifications
 
-    pub fn create_file(&mut self, full_path: &ArhPath) -> Result<&mut FileMeta> {
+    pub fn create_file(&mut self, full_path: &ArhPath) -> Result<FileEntry> {
         if self.get_file_info(full_path).is_some() {
             return Err(Error::FsAlreadyExists);
         }
-
-        // Follow existing paths
-        let (last, mut last_parent, mut path) = {
-            let nodes = &self.arh.path_dictionary().nodes;
-            let mut cur = (0, &nodes[0]);
-            let mut path = full_path.as_str();
-            let mut last_parent = 0;
-
-            while !cur.1.is_leaf() {
-                if path.is_empty() {
-                    // Whole `path` consumed but there are still nodes to traverse.
-                    // This means that there is another file with a name that extends it.
-                    return Err(Error::FsFileNameExtended);
-                }
-                let next = cur.1.next_after_chr(path.as_bytes()[0]) as usize;
-                if !nodes[next].is_child(cur.0 as i32) {
-                    break;
-                }
-                last_parent = cur.0;
-                cur = (next, &nodes[next]);
-                path = &path[1..];
-            }
-            ((cur.0 as i32, *cur.1), last_parent as i32, path)
-        };
-
-        let mut final_node = last;
-
-        if let DictNode::Leaf {
-            string_offset,
-            previous,
-        } = final_node.1
-        {
-            // If the final common node is a leaf, we need to split the path.
-            // Example: (-> denotes a XOR path)
-            // "text.txt" (t->e->-x->"t.txt")
-            // "text1.txt" (t->e->x->"???")
-            // Expected result:
-            // "text.txt" (t->-e->-x->t->".txt")
-            // "text1.txt" (t->-e->-x->t->"1.txt")
-
-            let (old_str, old_file) = self.arh.strings().get_str_part_id(string_offset as usize);
-            let old_str = old_str.to_string();
-            let mut old_str = old_str.as_str();
-            let mut node_block = self.arh.path_dictionary().node(previous).next();
-            let mut last = final_node.0;
-            // We take a clone here because some branches might fail, and failure is only detected
-            // after modifying part of it. We correctly throw errors but we don't want to leave
-            // the file system in an inconsistent state.
-            let mut path_dict = self.arh.path_dictionary().clone();
-
-            while !path.is_empty()
-                && !old_str.is_empty()
-                && old_str.as_bytes()[0] == path.as_bytes()[0]
-            {
-                // Continue the XOR path while characters match
-                let chr = old_str.as_bytes()[0] as i32;
-                let node_idx = node_block ^ chr;
-                let next_node = path_dict.node(node_idx);
-                let next;
-                if next_node.is_free() {
-                    // Next node is free, occupy it
-                    next = node_idx;
-                    *path_dict.node_mut(next) = DictNode::Occupied {
-                        previous: last,
-                        next: 0xFEFE,
-                    };
-                    path_dict.node_mut(last).attach_next(node_block);
-                } else {
-                    // Otherwise, allocate a block
-                    node_block = path_dict.allocate_new_block(last);
-                    next = node_block ^ path.as_bytes()[0] as i32;
-                    *path_dict.node_mut(next) = DictNode::Occupied {
-                        previous: last,
-                        next: 0xBADD,
-                    };
-                }
-                last = next;
-                old_str = &old_str[1..];
-                path = &path[1..];
-            }
-
-            if path.is_empty() || old_str.is_empty() {
-                return Err(Error::FsFileNameExtended);
-            }
-
-            // Found a level where the two strings differ. Make a block for them, copy the leaf node
-            // to it and pass it on.
-            let next_block = path_dict.allocate_new_block(last);
-            path_dict.node_mut(last).attach_next(next_block);
-
-            let id = self.arh.strings_mut().push(&old_str[1..], old_file);
-            let idx = next_block ^ old_str.as_bytes()[0] as i32;
-            *path_dict.node_mut(idx) = DictNode::Leaf {
-                previous: last,
-                string_offset: id,
-            };
-
-            let final_idx = next_block ^ path.as_bytes()[0] as i32;
-            final_node = (final_idx, *path_dict.node(final_idx));
-            last_parent = last;
-            path = &path[1..];
-
-            *self.arh.path_dictionary_mut() = path_dict;
-        }
-
-        // We need to diverge from the existing path. If the next expected node is free,
-        // we occupy it with the rest of the name. Otherwise, we must move the previous node
-        // alongside all its children to a new location that lets us add the new node.
-        if !final_node.1.is_free() {
-            let idx = self
-                .arh
-                .path_dictionary_mut()
-                .allocate_new_block(final_node.0)
-                ^ path.as_bytes()[0] as i32;
-            last_parent = final_node.0;
-            final_node = (idx, *self.arh.path_dictionary().node(idx));
-            path = &path[1..];
-        }
-
-        // `final_node` is now a free node.
-
-        let Arh {
-            file_table,
-            arh_ext_section,
-            ..
-        } = &mut self.arh;
-        let id = file_table.push_entry(
-            FileMeta::new_invalid(),
-            arh_ext_section.as_mut().map(ArhExtSection::recycle_bin_mut),
-        );
-        let str_offset = self.arh.strings_mut().push(path, id);
-        *self.arh.path_dictionary_mut().node_mut(final_node.0) = DictNode::Leaf {
-            previous: last_parent,
-            string_offset: str_offset,
-        };
-
-        // Update directory tree
+        let entry = self.arh_new.create_file(full_path)?;
         self.dir_tree.insert_file_entry(full_path.to_string());
-        Ok(self.arh.file_table.get_meta_mut(id).unwrap())
+        Ok(entry)
     }
 
     pub fn delete_file(&mut self, path: &ArhPath) -> Result<()> {
-        let (file_id, leaf_id) = self.get_file_id(path).ok_or(Error::FsNoEntry)?;
-
-        // We must recursively free nodes. Consider this scenario:
-        // Files "ab", "ac", "ad" are created, then removed. If nodes are not freed
-        // recursively, then file "a" cannot be created because the common node was not freed
-        self.arh.path_dictionary_mut().free_node_recursive(leaf_id);
-
-        // For the file entry, it's not as simple as it looks. While FileMeta has an ID field,
-        // the game actually indexes into the file table instead of filtering by that field.
-        // Because there is no longer a leaf pointing to that file node, we can zero out its
-        // contents, and recycle it later.
-        let file = self.arh.file_table.delete_entry(file_id).unwrap();
-        let ext = self.arh.get_or_init_ext(&self.opts);
-        ext.allocated_blocks.mark(&file, false);
-        ext.file_meta_recycle_bin.push(file_id);
-
-        // Update directory tree
+        self.arh_new.delete_file(path, &self.opts)?;
         self.dir_tree.remove_file_entry(path);
         Ok(())
+    }
+
+    pub fn set_hidden_flag(&mut self, path: &ArhPath, hidden: bool) -> Result<()> {
+        self.arh_new.hide_file(path, hidden)
     }
 
     /// Deletes an empty directory.
@@ -318,23 +246,8 @@ impl ArhFileSystem {
     /// This operation is atomic. If it fails, the file system will be in the same (visible)
     /// state as before it was attempted.
     pub fn rename_file(&mut self, path: &ArhPath, new_path: &ArhPath) -> Result<()> {
-        let meta = self.get_file_info(path).copied().ok_or(Error::FsNoEntry)?;
-        // We need to delete the file first, because the new name might be in conflict with the old
-        // file's name. For instance, some file managers first create a ".part" file which they then
-        // rename to the regular file name without ".part". This type of file names is not supported
-        // by the file system.
-        self.delete_file(path)?;
-        let new_file = match self.create_file(new_path) {
-            Ok(f) => f,
-            Err(e) => {
-                // Re-create the old file if creating the new one fails.
-                // This shouldn't fail as we just deleted it.
-                self.create_file(path).unwrap().clone_from(&meta);
-                return Err(e);
-            }
-        };
-        new_file.clone_from(&meta);
-        Ok(())
+        self.arh_new
+            .rename_file(path, new_path, &self.opts, &mut self.dir_tree)
     }
 
     /// Renames a directory, recursively moving its children.
@@ -361,32 +274,52 @@ impl ArhFileSystem {
         self.dir_tree.remove_empty_dir(path);
         Ok(())
     }
+}
 
+impl<A: ArhAccess + BinWrite> ArhFileSystem<A>
+where
+    for<'a> <A as BinWrite>::Args<'a>: Default,
+{
     /// Writes the updated version of the ARH file system to the given writer.
     pub fn sync(&mut self, mut writer: impl Write + Seek) -> Result<()> {
-        self.arh.prepare_for_write();
-        Ok(self.arh.write(&mut writer)?)
+        self.arh_new.prepare_for_write();
+        self.arh_new.write_le(&mut writer)?;
+        Ok(())
+    }
+}
+
+impl ArhFileSystem<CompatArhDyn> {
+    /// Writes the updated version of the ARH file system to the given writer.
+    pub fn sync(&mut self, mut writer: impl Write + Seek) -> Result<()> {
+        self.arh_new.prepare_for_write();
+        self.arh_new.as_compat().write_le(&mut writer)?;
+        Ok(())
+    }
+}
+
+impl FileEntry {
+    /// Returns the file's size after being extracted from the archive.
+    ///
+    /// For files that are stored uncompressed, the game expects `expanded_size` to be None,
+    /// which can be confusing. This method always returns a non-zero size. (except for actually
+    /// empty files)
+    pub fn actual_size(&self) -> u64 {
+        if let Some(exp_size) = self.expanded_size {
+            exp_size.into()
+        } else {
+            self.ard_size
+        }
+    }
+
+    pub fn is_flag(&self, flag: FileFlag) -> bool {
+        match flag {
+            FileFlag::Hidden => self.hidden,
+            FileFlag::HasXbc1Header => self.xbc1_header,
+        }
     }
 }
 
 impl DirNode {
-    fn build(arh: &Arh) -> Self {
-        let mut start = DirNode {
-            name: "/".to_string(),
-            entry: DirEntry::Directory {
-                children: Vec::new(),
-            },
-        };
-        for (idx, node) in arh.path_dictionary().nodes.iter().enumerate() {
-            if !node.is_leaf() {
-                continue;
-            }
-            start.insert_file_entry(arh.path_dictionary().get_full_path(idx, arh.strings()));
-        }
-
-        start
-    }
-
     /// Returns the paths of all files and subdirectories (and their children), relative to
     /// this directory node.
     ///
@@ -418,7 +351,7 @@ impl DirNode {
         paths
     }
 
-    fn insert_file_entry(&mut self, path: String) {
+    pub(crate) fn insert_file_entry(&mut self, path: String) {
         assert!(path.starts_with('/'), "path must start at the root");
         let mut node = self;
         let parts = path.split('/').collect::<Vec<_>>();
@@ -453,7 +386,7 @@ impl DirNode {
         }
     }
 
-    fn remove_file_entry(&mut self, path: &str) {
+    pub(crate) fn remove_file_entry(&mut self, path: &str) {
         assert!(path.starts_with('/'), "path must start at the root");
         let mut node = self;
         let parts = path.split('/').collect::<Vec<_>>();

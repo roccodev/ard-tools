@@ -2,8 +2,15 @@ use std::{collections::VecDeque, fs::File, io::Cursor};
 
 use ardain::{
     path::{ArhPath, ARH_PATH_ROOT},
-    ArhFileSystem, DirEntry,
+    ArhCompatFileSystem, DirEntry,
 };
+
+#[test]
+fn assert_version() {
+    let mut arh = load_arh();
+    arh = arh.into_v2().map(|_| ()).unwrap_err();
+    assert!(arh.into_v1().is_ok());
+}
 
 #[test]
 fn check_initial_reachable() {
@@ -151,13 +158,13 @@ fn rename_files() {
         let reverse_path =
             &dbg!(ArhPath::normalize(&reverse_path[..reverse_path.len() - 1]).unwrap());
         println!("Checking that {f} was reachable");
-        let meta = *arh.get_file_info(&f).unwrap();
+        let meta = arh.get_file_info(&f).unwrap();
         arh.rename_file(&f, &reverse_path).unwrap();
         check_and_read_back(&mut arh, |arh| {
             println!("Checking that {f} is no longer reachable");
             assert!(!arh.is_file(&f));
             println!("Checking that {reverse_path} is now reachable");
-            let new_meta = *arh.get_file_info(reverse_path).unwrap();
+            let new_meta = arh.get_file_info(reverse_path).unwrap();
             assert_eq!(meta, new_meta);
             println!("Checking reachable after renaming {f}");
             check_reachable(&arh);
@@ -165,7 +172,7 @@ fn rename_files() {
     }
 }
 
-fn check_reachable(arh: &ArhFileSystem) {
+fn check_reachable(arh: &ArhCompatFileSystem) {
     let node = arh.get_dir(&ARH_PATH_ROOT).unwrap();
     let mut queue = VecDeque::new();
     queue.push_back((node, ARH_PATH_ROOT));
@@ -184,15 +191,15 @@ fn check_reachable(arh: &ArhFileSystem) {
     }
 }
 
-fn check_and_read_back(arh: &mut ArhFileSystem, check_fn: impl Fn(&mut ArhFileSystem)) {
+fn check_and_read_back(arh: &mut ArhCompatFileSystem, check_fn: impl Fn(&mut ArhCompatFileSystem)) {
     check_fn(arh);
     let mut out_arh = Cursor::new(Vec::new());
     arh.sync(&mut out_arh).expect("arh write");
     out_arh.set_position(0);
-    let mut new_arh = ArhFileSystem::load(out_arh).expect("arh read back");
+    let mut new_arh = ArhCompatFileSystem::load(out_arh).expect("arh read back");
     check_fn(&mut new_arh);
 }
 
-fn load_arh() -> ArhFileSystem {
-    ArhFileSystem::load(File::open("tests/res/bf3.arh").unwrap()).unwrap()
+fn load_arh() -> ArhCompatFileSystem {
+    ArhCompatFileSystem::load(File::open("tests/res/bf3.arh").unwrap()).unwrap()
 }

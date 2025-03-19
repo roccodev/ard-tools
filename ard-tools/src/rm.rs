@@ -1,5 +1,5 @@
 use anyhow::{anyhow, Result};
-use ardain::{path::ArhPath, ArhFileSystem, DirEntry, FileFlag};
+use ardain::{path::ArhPath, ArhCompatFileSystem, DirEntry};
 use clap::{ArgGroup, Args};
 
 use crate::InputData;
@@ -43,7 +43,7 @@ pub fn run(input: &InputData, args: RemoveArgs) -> Result<()> {
     Ok(())
 }
 
-fn delete(fs: &mut ArhFileSystem, args: &RemoveArgs, path: &ArhPath) -> Result<()> {
+fn delete(fs: &mut ArhCompatFileSystem, args: &RemoveArgs, path: &ArhPath) -> Result<()> {
     if fs.is_file(path) {
         fs.delete_file(path)?;
     } else if fs.is_dir(path) {
@@ -68,16 +68,13 @@ fn delete(fs: &mut ArhFileSystem, args: &RemoveArgs, path: &ArhPath) -> Result<(
     Ok(())
 }
 
-fn set_hidden_flag(fs: &mut ArhFileSystem, path: &ArhPath, hidden: bool) -> Result<()> {
+fn set_hidden_flag(fs: &mut ArhCompatFileSystem, path: &ArhPath, hidden: bool) -> Result<()> {
     if fs.is_file(path) {
-        fs.get_file_info_mut(path)
-            .unwrap()
-            .set_flag(FileFlag::Hidden, true);
+        fs.set_hidden_flag(path, hidden)?;
     } else if fs.is_dir(path) {
         let dir = fs.get_dir(path).unwrap();
         for child in dir.children_paths() {
-            let meta = fs.get_file_info_mut(&path.join(&child)).unwrap();
-            meta.set_flag(FileFlag::Hidden, hidden);
+            fs.set_hidden_flag(&path.join(&child), hidden)?;
         }
     } else {
         return Err(anyhow!("{path}: no such file or directory"));

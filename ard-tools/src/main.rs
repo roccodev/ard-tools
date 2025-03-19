@@ -3,8 +3,8 @@ use std::{
     io::{BufReader, BufWriter},
 };
 
-use anyhow::{anyhow, Result};
-use ardain::{path::ArhPath, ArhFileSystem};
+use anyhow::{anyhow, Context, Result};
+use ardain::{path::ArhPath, Arh2NameTable, ArhCompatFileSystem, ArhOptions};
 use clap::{command, Args, Parser, Subcommand};
 
 mod extract;
@@ -38,6 +38,10 @@ struct InputData {
     /// .arh file will be overwritten!
     #[arg(long = "out-arh", global = true)]
     out_arh: Option<String>,
+    /// Path to a text file with file names, one per line. Used to reverse the hashes in ARH2
+    /// file systems
+    #[arg(long, global = true)]
+    hashes: Option<String>,
 }
 
 #[derive(Subcommand)]
@@ -64,14 +68,32 @@ fn main() -> Result<()> {
 }
 
 impl InputData {
-    pub fn load_fs(&self) -> Result<ArhFileSystem> {
+    pub fn load_fs(&self) -> Result<ArhCompatFileSystem> {
+        let options = self
+            .hashes
+            .as_ref()
+            .map(|path| {
+                Arh2NameTable::read(BufReader::new(File::open(path)?))
+                    .context("reading file name list")
+            })
+            .map(|table| {
+                table.map(|table| ArhOptions {
+                    arh2_name_table: table,
+                    ..Default::default()
+                })
+            })
+            .transpose()?
+            .unwrap_or_default();
         match &self.in_arh {
-            Some(path) => Ok(ArhFileSystem::load(BufReader::new(File::open(path)?))?),
+            Some(path) => Ok(ArhCompatFileSystem::load_with_options(
+                BufReader::new(File::open(path)?),
+                options,
+            )?),
             None => Err(anyhow!("input .arh must be passed in as --arh")),
         }
     }
 
-    pub fn write_fs(&self, fs: &mut ArhFileSystem) -> Result<()> {
+    pub fn write_fs(&self, fs: &mut ArhCompatFileSystem) -> Result<()> {
         match self.out_arh.as_ref().or(self.in_arh.as_ref()) {
             Some(path) => Ok(fs.sync(BufWriter::new(File::create(path)?))?),
             None => Err(anyhow!("input .arh must be passed in as --arh")),

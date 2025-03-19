@@ -5,8 +5,10 @@ use std::io::{Seek, Write};
 use xc3_lib::xbc1::{CompressionType, Xbc1};
 
 use crate::{
-    ard::ArdWriter, arh::FileTable, arh_ext::BlockAllocTable, error::Result, ArhFileSystem,
-    FileFlag, FileMeta,
+    ard::ArdWriter,
+    arh1::{ext::BlockAllocTable, Arh1, Arh1Entry, FileTable},
+    error::Result,
+    ArhFileSystem, FileFlag,
 };
 
 pub struct ArdFileAllocator<'a, 'w, W> {
@@ -40,11 +42,12 @@ struct CompressionMeta {
 }
 
 impl<'a, 'w, W: Write + Seek> ArdFileAllocator<'a, 'w, W> {
-    pub fn new(arh: &'a mut ArhFileSystem, writer: &'w mut ArdWriter<W>) -> Self {
-        arh.arh.get_or_init_ext(&arh.opts);
+    pub fn new(arh: &'a mut ArhFileSystem<Arh1>, writer: &'w mut ArdWriter<W>) -> Self {
+        let arh_file = &mut arh.arh_new;
+        arh_file.get_or_init_ext(&arh.opts);
         Self {
-            block_table: &mut arh.arh.arh_ext_section.as_mut().unwrap().allocated_blocks,
-            file_table: &mut arh.arh.file_table,
+            block_table: &mut arh_file.arh_ext_section.as_mut().unwrap().allocated_blocks,
+            file_table: &mut arh_file.file_table,
             writer,
         }
     }
@@ -132,7 +135,7 @@ impl<'a, 'w, W: Write + Seek> ArdFileAllocator<'a, 'w, W> {
     fn update_meta(
         alloc_table: &mut BlockAllocTable,
         data: &EntryFile,
-        meta: &mut FileMeta,
+        meta: &mut Arh1Entry,
         offset: u64,
     ) {
         meta.offset = offset;

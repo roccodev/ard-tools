@@ -11,7 +11,7 @@ use std::{
 use ardain::{
     error::Result,
     path::{ArhPath, ARH_PATH_MAX_LEN, ARH_PATH_ROOT},
-    ArhFileSystem, DirEntry, DirNode, FileMeta,
+    ArhCompatFileSystem, DirEntry, DirNode, FileEntry,
 };
 use fuser::{
     FileAttr, FileType, Filesystem, ReplyAttr, ReplyData, ReplyDirectory, ReplyEmpty, ReplyEntry,
@@ -23,7 +23,7 @@ use log::debug;
 use crate::{fuse_err, write::FileBuffers, StandardArdFile};
 
 pub struct ArhFuseSystem {
-    pub arh: ArhFileSystem,
+    pub arh: ArhCompatFileSystem,
     pub ard: Option<StandardArdFile>,
     inode_cache: HashMap<u64, (ArhPath, u64)>,
     out_arh: PathBuf,
@@ -44,7 +44,7 @@ impl ArhFuseSystem {
         out_arh: impl AsRef<Path>,
         (uid, gid): (u32, u32),
     ) -> anyhow::Result<Self> {
-        let fs = ArhFileSystem::load(arh)?;
+        let fs = ArhCompatFileSystem::load(arh)?;
         Ok(Self {
             arh: fs,
             inode_cache: HashMap::default(),
@@ -137,10 +137,10 @@ impl ArhFuseSystem {
         }
     }
 
-    fn make_file_attr(&self, file: &FileMeta, inode: u64) -> FileAttr {
-        let mut sz = file.uncompressed_size.into();
-        if sz == 0 && file.compressed_size != 48 {
-            sz = file.compressed_size.into();
+    fn make_file_attr(&self, file: &FileEntry, inode: u64) -> FileAttr {
+        let mut sz = file.expanded_size.map(Into::into).unwrap_or_default();
+        if sz == 0 && file.ard_size != 48 {
+            sz = file.ard_size.into();
         }
         FileAttr {
             ino: inode,
@@ -195,7 +195,7 @@ impl Filesystem for ArhFuseSystem {
         }
         if let Some(file) = self.arh.get_file_info(&name) {
             debug!("[LOOKUP:{name}] found file with inode {ino}");
-            reply.entry(&TTL, &self.make_file_attr(file, ino), 0);
+            reply.entry(&TTL, &self.make_file_attr(&file, ino), 0);
             return;
         }
         debug!("[LOOKUP:{name}] no match");
@@ -213,7 +213,7 @@ impl Filesystem for ArhFuseSystem {
             return;
         }
         if let Some(file) = self.arh.get_file_info(name) {
-            reply.attr(&TTL, &self.make_file_attr(file, ino));
+            reply.attr(&TTL, &self.make_file_attr(&file, ino));
             return;
         }
         debug!("[GETATTR:{name}] no match");
@@ -250,7 +250,7 @@ impl Filesystem for ArhFuseSystem {
         };
 
         if let Some(file) = self.arh.get_file_info(name) {
-            reply.attr(&TTL, &self.make_file_attr(file, ino));
+            reply.attr(&TTL, &self.make_file_attr(&file, ino));
             return;
         }
         reply.error(ENOENT);
@@ -335,7 +335,7 @@ impl Filesystem for ArhFuseSystem {
         };
         let data = fuse_err!(
             ard.reader
-                .entry(file)
+                .entry(&file)
                 .skip_take(offset as u64, size.into())
                 .read(),
             reply
@@ -374,7 +374,7 @@ impl Filesystem for ArhFuseSystem {
         };
         let name = fuse_err!(name, reply);
         let inode = self.get_inode_and_save(name.clone());
-        let meta = *fuse_err!(self.arh.create_file(&name), reply);
+        let meta = fuse_err!(self.arh.create_file(&name), reply);
         reply.entry(&TTL, &self.make_file_attr(&meta, inode), 0);
     }
 

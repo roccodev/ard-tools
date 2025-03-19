@@ -1,7 +1,7 @@
 use std::borrow::Cow;
 
 use anyhow::{anyhow, Result};
-use ardain::{path::ArhPath, DirEntry, FileFlag, FileMeta};
+use ardain::{path::ArhPath, DirEntry, FileEntry, FileFlag};
 use clap::Args;
 
 use crate::InputData;
@@ -54,9 +54,9 @@ pub fn run(input: &InputData, args: ListArgs) -> Result<()> {
                 table.push_row::<Cow<_>>(vec![
                     child.name.as_str().into(),
                     "File".into(),
-                    get_flags_display(file).into(),
+                    get_flags_display(&file).into(),
                     format!("{file_size}").into(),
-                    format!("{:X}", file.offset).into(),
+                    format!("{:X}", file.ard_offset).into(),
                 ]);
                 files += 1;
             }
@@ -76,7 +76,7 @@ pub fn run(input: &InputData, args: ListArgs) -> Result<()> {
     Ok(())
 }
 
-fn get_flags_display(meta: &FileMeta) -> String {
+fn get_flags_display(meta: &FileEntry) -> String {
     let mut res = String::new();
     if meta.is_flag(FileFlag::Hidden) {
         res.push('H');

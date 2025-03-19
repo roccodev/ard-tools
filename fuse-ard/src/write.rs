@@ -3,13 +3,13 @@
 //! Files stored in ARD files are potentially compressed, so we can't write them in chunks.
 //! We hold onto their data until the user calls `close` or `fsync`.
 
-use std::io::Write;
+use std::{io::Write, mem::MaybeUninit};
 
-use anyhow::Result;
+use anyhow::{anyhow, Result};
 use ardain::{
     file_alloc::{ArdFileAllocator, CompressionStrategy},
     path::ArhPath,
-    ArhFileSystem,
+    Arh1FileSystem, ArhCompatFileSystem,
 };
 use log::warn;
 
@@ -58,7 +58,11 @@ impl FileBuffers {
         self.open_files.get_mut(usize::try_from(fd).ok()?)
     }
 
-    pub fn flush_all(&mut self, arh: &mut ArhFileSystem, ard: &mut StandardArdFile) -> Result<()> {
+    pub fn flush_all(
+        &mut self,
+        arh: &mut ArhCompatFileSystem,
+        ard: &mut StandardArdFile,
+    ) -> Result<()> {
         for file in &mut self.open_files {
             file.flush(arh, ard)?;
         }
@@ -74,9 +78,13 @@ impl FileBuffer {
         })
     }
 
-    pub fn flush(&mut self, arh: &mut ArhFileSystem, ard: &mut StandardArdFile) -> Result<()> {
+    pub fn flush(
+        &mut self,
+        arh: &mut ArhCompatFileSystem,
+        ard: &mut StandardArdFile,
+    ) -> Result<()> {
         // Read the file, apply changes, then write back
-        let Some(meta) = arh.get_file_info(&self.path).copied() else {
+        let Some(meta) = arh.get_file_info(&self.path) else {
             // Likely deleted but didn't call `close`
             warn!(
                 "[flush] dangling file descriptor (forgot to close()?): {}",
@@ -89,11 +97,24 @@ impl FileBuffer {
             op.run(&mut buf)?;
         }
         // TODO make strategy configurable
-        ArdFileAllocator::new(arh, &mut ard.writer).replace_file(
-            meta.id,
-            &buf,
-            CompressionStrategy::Best,
-        )?;
+        unsafe {
+            // TODO actually implement arh2 ext
+            match std::mem::replace(arh, MaybeUninit::uninit().assume_init()).into_v1() {
+                Ok(mut arh1) => {
+                    let res = ArdFileAllocator::new(&mut arh1, &mut ard.writer).replace_file(
+                        meta.unique_id.try_into().unwrap(),
+                        &buf,
+                        CompressionStrategy::Best,
+                    );
+                    *arh = arh1.into_compat();
+                    res?;
+                }
+                Err(other) => {
+                    *arh = other;
+                    return Err(anyhow!("arh2 write not yet supported"));
+                }
+            }
+        }
         // Make sure arh modifications get saved to disk
         ard.writer.get_mut().flush()?;
         Ok(())
