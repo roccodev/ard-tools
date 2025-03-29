@@ -1,0 +1,106 @@
+name: Test & Package
+
+on:
+  push:
+    branches: [master, "feature/xcxde"]
+    tags: ["*.*.*"]
+  pull_request:
+
+jobs:
+  clippy:
+    name: Check/Clippy
+    runs-on: ubuntu-latest
+    steps:
+      - name: Install libfuse
+        run: sudo apt install -y libfuse3-dev
+
+      - name: Checkout
+        uses: actions/checkout@v1
+
+      - name: Install rust
+        uses: actions-rs/toolchain@v1
+        with:
+          toolchain: stable
+          components: clippy
+          profile: minimal
+          override: true
+
+      - name: Run clippy
+        uses: actions-rs/clippy-check@v1
+        with:
+          token: ${{ secrets.GITHUB_TOKEN }}
+          args: --all-features
+  
+  test:
+    name: Run tests
+    needs: [clippy]
+    runs-on: ubuntu-latest
+    strategy:
+      matrix:
+        build: [stable, beta]
+        include:
+          - build: beta
+            rust: beta
+    steps:
+      - name: Install libfuse
+        run: sudo apt install -y libfuse3-dev
+
+      - name: Checkout
+        uses: actions/checkout@v1
+
+      - name: Install rust
+        uses: actions-rs/toolchain@v1
+        with:
+          toolchain: ${{ matrix.rust || 'stable' }}
+          profile: minimal
+          override: true
+
+      - name: Test All
+        uses: actions-rs/cargo@v1
+        with:
+          command: test
+          args: --release --all-features # some tests might be slow in dev profile
+
+      - name: Test toolset
+        run: cd toolset && cargo test --all-features
+  
+  build-toolset:
+    name: Build & package toolset
+    needs: [test]
+    if: github.ref == 'refs/heads/master'
+    runs-on: ${{ matrix.builds.os }}
+    strategy:
+      matrix:
+        builds:
+          - os: ubuntu-latest
+            file: linux-x86_64-glibc
+            out: ard-tools
+            target: x86_64-unknown-linux-gnu
+          - os: ubuntu-latest
+            file: linux-x86_64-musl
+            out: ard-tools
+            target: x86_64-unknown-linux-musl
+          - os: windows-2019
+            file: win64.exe
+            out: ard-tools.exe
+            target: x86_64-pc-windows-msvc
+            build_args: --exclude fuse-ard
+    steps:
+      - if: runner.os == 'Linux'
+        name: Install libfuse
+        run: sudo apt install -y libfuse3-dev
+      - name: Checkout
+        uses: actions/checkout@v2
+      - name: Install Rust
+        uses: actions-rs/toolchain@v1
+        with:
+          toolchain: stable
+          target: ${{ matrix.builds.target }}
+      - name: Build
+        run: cd toolset && cargo build --release --target ${{ matrix.builds.target }} ${{ matrix.builds.build_args }}
+      - name: Upload executable
+        uses: actions/upload-artifact@v4
+        with:
+          name: ard-tools-${{ matrix.builds.file }}
+          path: target/${{ matrix.builds.target }}/release/${{ matrix.builds.out }}
+    
