@@ -99,7 +99,7 @@ impl FileBuffer {
         // TODO make strategy configurable
         unsafe {
             // TODO actually implement arh2 ext
-            match std::mem::replace(arh, MaybeUninit::uninit().assume_init()).into_v1() {
+            match std::ptr::read(arh).into_v1() {
                 Ok(mut arh1) => {
                     let res = ArdFileAllocator::new(&mut arh1, &mut ard.writer).replace_file(
                         meta.unique_id.try_into().unwrap(),

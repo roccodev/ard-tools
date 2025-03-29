@@ -36,11 +36,8 @@ impl CompatArh {
         };
         if inner_ref.is::<A>() {
             let versioned = unsafe {
-                // SAFETY: There is no way to unwind at this point
-                let out = std::mem::replace(
-                    inner_ref.downcast_mut().unwrap(),
-                    MaybeUninit::uninit().assume_init(),
-                );
+                // SAFETY: Manual mem::take, and there is no way to unwind at this point
+                let out = std::ptr::read(inner_ref.downcast_mut().unwrap());
                 // Keep the forget here so it's not removed accidentally
                 std::mem::forget(self);
                 out
