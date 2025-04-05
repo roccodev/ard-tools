@@ -88,7 +88,7 @@ pub(crate) mod private {
     }
 }
 
-pub trait ArhAccess: private::ArhAccessPrivate {}
+pub trait ArhAccess: private::ArhAccessPrivate + Any {}
 
 impl<A: ArhAccess + BinRead> ArhFileSystem<A>
 where
@@ -143,18 +143,30 @@ impl ArhFileSystem<CompatArhDyn> {
         self.into_versioned::<Arh2>()
     }
 
+    pub fn is_v1(&self) -> bool {
+        self.is_versioned::<Arh1>()
+    }
+
+    pub fn is_v2(&self) -> bool {
+        self.is_versioned::<Arh2>()
+    }
+
+    fn is_versioned<A: ArhAccess>(&self) -> bool {
+        let arh_ref = &*self.arh_new as &dyn Any;
+        arh_ref.is::<A>()
+    }
+
     fn into_versioned<A: ArhAccess + 'static>(self) -> std::result::Result<ArhFileSystem<A>, Self> {
-        match self.arh_new.into_compat().into_inner::<A>() {
-            Ok(versioned) => Ok(ArhFileSystem {
+        let arh_new_ref = &*self.arh_new as &dyn Any;
+        if arh_new_ref.is::<A>() {
+            let arh_new = self.arh_new as Box<dyn Any>;
+            Ok(ArhFileSystem {
                 dir_tree: self.dir_tree,
                 opts: self.opts,
-                arh_new: versioned,
-            }),
-            Err(old) => Err(ArhFileSystem {
-                dir_tree: self.dir_tree,
-                opts: self.opts,
-                arh_new: old,
-            }),
+                arh_new: *arh_new.downcast::<A>().unwrap(),
+            })
+        } else {
+            Err(self)
         }
     }
 }

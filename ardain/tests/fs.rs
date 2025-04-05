@@ -8,7 +8,9 @@ use ardain::{
 #[test]
 fn assert_version() {
     let mut arh = load_arh();
+    assert!(!arh.is_v2());
     arh = arh.into_v2().map(|_| ()).unwrap_err();
+    assert!(arh.is_v1());
     assert!(arh.into_v1().is_ok());
 }
 

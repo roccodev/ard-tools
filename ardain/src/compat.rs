@@ -28,25 +28,6 @@ impl CompatArh {
             CompatArh::Arh2(arh) => Box::new(arh),
         }
     }
-
-    pub fn into_inner<A: ArhAccess + 'static>(mut self) -> std::result::Result<A, CompatArhDyn> {
-        let inner_ref: &mut dyn Any = match &mut self {
-            CompatArh::Arh1(arh) => arh,
-            CompatArh::Arh2(arh) => arh,
-        };
-        if inner_ref.is::<A>() {
-            let versioned = unsafe {
-                // SAFETY: Manual mem::take, and there is no way to unwind at this point
-                let out = std::ptr::read(inner_ref.downcast_mut().unwrap());
-                // Keep the forget here so it's not removed accidentally
-                std::mem::forget(self);
-                out
-            };
-            Ok(versioned)
-        } else {
-            Err(self.erase())
-        }
-    }
 }
 
 impl ArhAccess for CompatArhDyn {}
