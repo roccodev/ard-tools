@@ -40,7 +40,7 @@ impl<R: Read + Seek> ArdReader<R> {
             reader: &mut self.reader,
             offset: file.offset,
             compressed: file.uncompressed_size != 0,
-            entry_size: file.compressed_size.into(),
+            entry_size: file.actual_size().into(),
         }
     }
 }
