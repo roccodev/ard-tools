@@ -40,7 +40,7 @@ impl<R: Read + Seek> ArdReader<R> {
             reader: &mut self.reader,
             offset: file.offset,
             compressed: file.uncompressed_size != 0,
-            entry_size: file.actual_size().into(),
+            entry_size: file.compressed_size.into(),
         }
     }
 }
@@ -67,7 +67,7 @@ impl<W: Write + Seek> ArdWriter<W> {
 impl<R: Read + Seek> EntryReader<R> {
     /// Reads the entry in full.
     pub fn read(&mut self) -> Result<Vec<u8>> {
-        self.read_at(0, self.entry_size)
+        self.read_at(0, u64::MAX)
     }
 
     /// Wraps the reader to apply an offset and stop reading before the end of the file.
