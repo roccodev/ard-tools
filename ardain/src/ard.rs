@@ -24,7 +24,7 @@ pub struct EntryReader<R> {
 pub struct OffsetReader<R> {
     entry: EntryReader<R>,
     offset: u64,
-    max_size: Option<u64>,
+    max_size: u64,
 }
 
 impl<R: Read + Seek> ArdReader<R> {
@@ -75,7 +75,7 @@ impl<R: Read + Seek> EntryReader<R> {
         OffsetReader {
             entry: self,
             offset: skip,
-            max_size: Some(take),
+            max_size: take,
         }
     }
 
@@ -114,13 +114,14 @@ impl<R: Read + Seek> EntryReader<R> {
 
 impl<R: Read + Seek> OffsetReader<R> {
     pub fn read(&mut self) -> Result<Vec<u8>> {
-        self.entry
-            .read_at(self.offset, self.max_size.unwrap_or(self.entry.entry_size))
+        self.entry.read_at(self.offset, self.max_size)
     }
 }
 
 #[cfg(test)]
 mod tests {
+    use crate::arh1::Arh1Entry;
+
     use super::*;
     use binrw::BinWrite;
     use std::io::Cursor;
@@ -138,11 +139,14 @@ mod tests {
         let compressed_size = data.get_ref().len() as u32;
         assert!(compressed_size < expected.len() as u32);
 
-        let mut file = FileMeta::new_for_test(0, compressed_size);
+        let mut file = Arh1Entry::new_for_test(0, compressed_size);
         file.uncompressed_size = expected.len() as u32;
 
         data.set_position(0);
-        let actual = ArdReader::new(&mut data).entry(&file).read().unwrap();
+        let actual = ArdReader::new(&mut data)
+            .entry(&file.into())
+            .read()
+            .unwrap();
 
         assert_eq!(actual, expected);
     }
