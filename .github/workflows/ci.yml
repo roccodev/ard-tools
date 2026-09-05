@@ -78,7 +78,7 @@ jobs:
             out: ard-tools
             target: x86_64-unknown-linux-musl
             build_args: --exclude fuse-ard
-          - os: windows-2019
+          - os: windows-2025
             file: win64.exe
             out: ard-tools.exe
             target: x86_64-pc-windows-msvc
