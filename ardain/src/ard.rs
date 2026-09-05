@@ -67,7 +67,7 @@ impl<W: Write + Seek> ArdWriter<W> {
 impl<R: Read + Seek> EntryReader<R> {
     /// Reads the entry in full.
     pub fn read(&mut self) -> Result<Vec<u8>> {
-        self.read_at(0, self.entry_size)
+        self.read_at(0, u64::MAX)
     }
 
     /// Wraps the reader to apply an offset and stop reading before the end of the file.
@@ -106,5 +106,34 @@ impl<R: Read + Seek> OffsetReader<R> {
     pub fn read(&mut self) -> Result<Vec<u8>> {
         self.entry
             .read_at(self.offset, self.max_size.unwrap_or(self.entry.entry_size))
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use binrw::BinWrite;
+    use std::io::Cursor;
+    use xc3_lib::xbc1::{CompressionType, Xbc1};
+
+    #[test]
+    fn reads_full_compressed_entry() {
+        let expected = vec![0u8; 4096];
+        let xbc1 =
+            Xbc1::from_decompressed(String::new(), &expected, CompressionType::Zlib).unwrap();
+
+        let mut data = Cursor::new(Vec::new());
+        xbc1.write_le(&mut data).unwrap();
+
+        let compressed_size = data.get_ref().len() as u32;
+        assert!(compressed_size < expected.len() as u32);
+
+        let mut file = FileMeta::new_for_test(0, compressed_size);
+        file.uncompressed_size = expected.len() as u32;
+
+        data.set_position(0);
+        let actual = ArdReader::new(&mut data).entry(&file).read().unwrap();
+
+        assert_eq!(actual, expected);
     }
 }
