@@ -88,7 +88,8 @@ pub fn run(input: &InputData, mut args: ExtractArgs) -> Result<()> {
             std::fs::create_dir_all(parent)
                 .with_context(|| format!("failed to create parent dir {parent:?}"))?;
         }
-        let mut ard_file = &thread_fds[current_thread_index().unwrap()];
+        // thread index is None if this runs on the main thread, i.e. if thread_fds.len() == 1
+        let mut ard_file = &thread_fds[current_thread_index().unwrap_or_default()];
         ard_file.rewind()?;
         ArdAccess::File(ard_file.try_clone()?)
             .copy_to(&out_path, &file)

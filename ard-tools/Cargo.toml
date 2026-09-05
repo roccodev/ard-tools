@@ -7,5 +7,5 @@ edition = "2021"
 ardain = { path = "../ardain" }
 anyhow = "1"
 clap = { version = "4.5.4", features = ["derive"] }
-rayon = "1.10"
+rayon = "1.12"
 indicatif = "0.17"
