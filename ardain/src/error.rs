@@ -1,6 +1,6 @@
 use std::{io, num::TryFromIntError};
 
-use xc3_lib::{error::DecompressStreamError, xbc1::CreateXbc1Error};
+use xc3_lib::error::{CreateXbc1Error, DecompressStreamError};
 
 use crate::path::InvalidPathError;
 

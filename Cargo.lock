@@ -78,6 +78,12 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "c84fc003e338a6f69fbd4f7fe9f92b535ff13e9af8997f3b14b6ddff8b1df46d"
 
 [[package]]
+name = "arbitrary-int"
+version = "2.2.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "0ab387a0c4143b4fd3804e193946e78c8ab16cf26c5fde2048e4ac3d618c3b64"
+
+[[package]]
 name = "ard-tools"
 version = "0.1.0"
 dependencies = [
@@ -122,8 +128,18 @@ version = "0.2.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "dc707ed8ebf81de5cd6c7f48f54b4c8621760926cdf35a57000747c512e67b57"
 dependencies = [
- "arbitrary-int",
- "bilge-impl",
+ "arbitrary-int 1.2.7",
+ "bilge-impl 0.2.0",
+]
+
+[[package]]
+name = "bilge"
+version = "0.3.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "279c74986684d5cc7bbbd079aa448e8f852992cd385d85bb3a37e374c087b065"
+dependencies = [
+ "arbitrary-int 2.2.0",
+ "bilge-impl 0.3.0",
 ]
 
 [[package]]
@@ -140,10 +156,23 @@ dependencies = [
 ]
 
 [[package]]
-name = "binrw"
-version = "0.14.1"
+name = "bilge-impl"
+version = "0.3.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "7d4bca59c20d6f40c2cc0802afbe1e788b89096f61bdf7aeea6bf00f10c2909b"
+checksum = "a1176e49f42fe135cd2b56465e4f7d07038d3728f5e9f27fb2f08ed3fef75339"
+dependencies = [
+ "itertools",
+ "proc-macro-error2",
+ "proc-macro2",
+ "quote",
+ "syn 2.0.100",
+]
+
+[[package]]
+name = "binrw"
+version = "0.15.2"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "6ad120d555272286c1017d25165ab8bd74806f13fc85b258484ec7e4ce75458f"
 dependencies = [
  "array-init",
  "binrw_derive",
@@ -152,15 +181,15 @@ dependencies = [
 
 [[package]]
 name = "binrw_derive"
-version = "0.14.1"
+version = "0.15.2"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "d8ba42866ce5bced2645bfa15e97eef2c62d2bdb530510538de8dd3d04efff3c"
+checksum = "6df92e0e9baae4dc82c7bad7715ca40c0a5c71539057bf2ea04a5c29c980410b"
 dependencies = [
  "either",
  "owo-colors",
  "proc-macro2",
  "quote",
- "syn 1.0.109",
+ "syn 2.0.100",
 ]
 
 [[package]]
@@ -606,9 +635,9 @@ checksum = "b15813163c1d831bf4a13c3610c05c0d03b39feb07f7e09fa234dac9b15aaf39"
 
 [[package]]
 name = "owo-colors"
-version = "3.5.0"
+version = "4.4.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "c1b04fb49957986fdce4d6ee7a65027d55d4b6d2265e5848bbb507b58ccfdb6f"
+checksum = "13c45bb4a6ae1280ec0803b1ef9d3455eb50f01efbbe1447ab020f1d54fba9d8"
 
 [[package]]
 name = "page_size"
@@ -668,6 +697,27 @@ dependencies = [
  "proc-macro2",
  "quote",
  "version_check",
+]
+
+[[package]]
+name = "proc-macro-error-attr2"
+version = "2.0.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "96de42df36bb9bba5542fe9f1a054b8cc87e172759a1868aa05c1f3acc89dfc5"
+dependencies = [
+ "proc-macro2",
+ "quote",
+]
+
+[[package]]
+name = "proc-macro-error2"
+version = "2.0.1"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "11ec05c52be0a07b08061f7dd003e7d7092e0472bc731b4af7bb1ef876109802"
+dependencies = [
+ "proc-macro-error-attr2",
+ "proc-macro2",
+ "quote",
 ]
 
 [[package]]
@@ -1053,7 +1103,7 @@ version = "0.3.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "84bb5ee7b48d707cd2dbb898c04edabbf7f53e75ea7d5af245d9eef308b5fe4c"
 dependencies = [
- "bilge",
+ "bilge 0.2.0",
 ]
 
 [[package]]
@@ -1153,11 +1203,11 @@ checksum = "bec47e5bfd1bff0eeaf6d8b485cc1074891a197ab4225d504cb7a1ab88b02bf0"
 
 [[package]]
 name = "xc3_lib"
-version = "0.18.0"
+version = "0.22.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "2d6e4d51b3c313b754f2f5b4731cca852b528351d1e499097a552b21c8fff5e5"
+checksum = "6253da01f7a490dd9731be4d8ca4e8c772efcd578b23d087949f48884ef37c63"
 dependencies = [
- "bilge",
+ "bilge 0.3.0",
  "binrw",
  "flate2",
  "image_dds",
@@ -1178,9 +1228,9 @@ dependencies = [
 
 [[package]]
 name = "xc3_write"
-version = "0.18.0"
+version = "0.22.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "6655167e5b428a3330690932b1b63e1d2ea3212a163d7f88a9f3b922cda90e56"
+checksum = "32ef33924d7a500769541c23462be690d0c5047807e440fea1416653942d7cf9"
 dependencies = [
  "indexmap",
  "xc3_write_derive",
@@ -1188,9 +1238,9 @@ dependencies = [
 
 [[package]]
 name = "xc3_write_derive"
-version = "0.18.0"
+version = "0.22.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "57c784382a874c088c61bf08f569fc78b3025430dc0566344d22d89f8dee7f50"
+checksum = "a036013c84aa66b71ec7c031ad946f3715c3de4456d1c3fc9163549ce5afcb75"
 dependencies = [
  "proc-macro2",
  "quote",

@@ -5,7 +5,7 @@ version = "0.2.0"
 edition = "2021"
 
 [dependencies]
-binrw = "0.14"
+binrw = "0.15"
 thiserror = "2.0"
-xc3_lib = "0.18.0"
+xc3_lib = "0.22.0"
 twox-hash = "2.1"
