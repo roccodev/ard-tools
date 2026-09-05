@@ -2,7 +2,7 @@ name: Test & Package
 
 on:
   push:
-    branches: [master, "feature/xcxde"]
+    branches: [master, "feature/xcxde", "ci/test"]
     tags: ["*.*.*"]
   pull_request:
 
@@ -64,7 +64,7 @@ jobs:
   package:
     name: Build & package
     needs: [test]
-    if: github.ref == 'refs/heads/master'
+    #if: github.ref == 'refs/heads/master'
     runs-on: ${{ matrix.builds.os }}
     strategy:
       matrix:
@@ -83,6 +83,11 @@ jobs:
             out: ard-tools.exe
             target: x86_64-pc-windows-msvc
             build_args: --exclude fuse-ard
+          - os: macos-latest
+            file: macos-arm64
+            out: ard-tools
+            target: aarch64-apple-darwin
+            build_args: --exclude fuse-ard
     steps:
       - if: runner.os == 'Linux'
         name: Install libfuse & musl-gcc
@@ -96,6 +101,10 @@ jobs:
           target: ${{ matrix.builds.target }}
       - name: Build
         run: cargo build --workspace --release --target ${{ matrix.builds.target }} ${{ matrix.builds.build_args }}
+      - if: runner.os == 'macOS'
+        name: Sign binary
+        working-directory: target/${{ matrix.builds.target }}/release
+        run: codesign -s - ${{ matrix.builds.out }}
       - name: Upload executable
         uses: actions/upload-artifact@v4
         with:
